@@ -170,6 +170,29 @@ python cctv_viewer.py resolve -i cameras.csv \
     --retry-unresolved --try-defaults
 ```
 
+#### Resolve options
+
+Beyond the flags above, `resolve` accepts (see the full **Common options**
+table below for defaults):
+
+| Option | What it does |
+|--------|--------------|
+| `--max-candidates N` | probe at most `N` URL templates per camera (default 25) |
+| `--all` | probe **every** matching template — no cap, exhaustive but slower |
+| `--try-defaults` | on failure, retry with the vendor's default credentials, then common pairs |
+| `--count-channels` | record each NVR family's channel range (viewers/export then cap to it) |
+| `--count-max N` / `--channel-batch N` | bound and batch channel counting |
+| `--reach-timeout S` | TCP pre-check timeout; `0` disables the offline-host skip |
+| `--workers N` / `--timeout S` | resolve concurrency and per-URL probe timeout |
+| `--use-cache` | reprint the last `resolved.csv` instead of re-resolving |
+
+Example — an exhaustive, maximally-thorough resolve:
+
+```bash
+python cctv_viewer.py resolve -i cameras.csv \
+    --all --try-defaults --retry-unresolved --count-channels --workers 4
+```
+
 ### 4. View
 
 ```bash
