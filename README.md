@@ -18,9 +18,14 @@ Cameras on an **NVR/DVR** expose multiple channels behind one IP. You don't have
 to know how many: the viewers show one **family** (CSV row) at a time and tile
 its channels — switch families from the keyboard (OpenCV) or a dropdown (web) —
 and `export --all-channels` walks every channel automatically. Add
-`--count-channels` at resolve time to record how many live channels each family
-has (stored in `resolved.csv`); the viewers and export then never frame beyond
-that number.
+`--count-channels` at resolve time to record each family's channel range
+(stored in `resolved.csv`); the viewers and export then never frame beyond it.
+
+Channel discovery probes in **batches** (`--channel-batch`, default 10) and
+stops only when a *whole batch* is empty, so a dead channel in the middle — e.g.
+channel 16 of a 50-channel NVR — doesn't truncate discovery (that channel just
+shows as an offline tile). A gap larger than the batch size ends discovery, so
+raise `--channel-batch` if your NVR has big blocks of unused channels.
 
 > ⚠️ **Authorized use only.** Use this tool exclusively on cameras you own or
 > have explicit written permission to access. You are responsible for complying
@@ -228,8 +233,9 @@ found some) and writes `exports/<timestamp>/<camera>-ch<N>.jpg`.
 | `--reach-timeout` | TCP reachability pre-check timeout (default 2); `0` disables it |
 | `--max-candidates` | max URL templates probed per camera per credential set (default 25) |
 | `--all` | probe **all** matching templates (no cap) — exhaustive but slower |
-| `--count-channels` | count each family's live channels, store it, and cap viewers/export to it |
+| `--count-channels` | find each family's channel range, store it, and cap viewers/export to it |
 | `--count-max` | highest channel probed when counting (default 64) |
+| `--channel-batch` | probe channels in batches of this size; stop only when a whole batch is empty (default 10) |
 | `-v, --verbose` | debug logging |
 
 ## Project layout

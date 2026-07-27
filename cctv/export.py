@@ -56,42 +56,45 @@ def _grab_current(cam: ResolvedCamera, out_dir: str, frames: int,
 
 
 def _grab_all_channels(cam: ResolvedCamera, out_dir: str, max_channels: int,
-                       timeout: float, miss_streak: int) -> int:
+                       timeout: float, batch_size: int) -> int:
     """Save one frame per live channel of an NVR/DVR.
 
-    Stops after ``miss_streak`` consecutive empty channels once at least one
-    channel has produced a frame (channels are normally contiguous from 1).
+    If resolve already counted this family's channels, grab exactly that range.
+    Otherwise probe in batches of ``batch_size`` and stop only when a whole
+    batch is empty — tolerating dead channels in the middle of the range.
     """
     base = cam.working_url
     if not supports_channel(base):
         return _grab_current(cam, out_dir, 1, timeout)
 
-    # If resolve counted this family's channels, grab exactly that many; else
-    # probe up to max_channels and stop after a run of empty channels.
-    if cam.channels and cam.channels > 0:
-        upper, use_miss_streak = cam.channels, False
-    else:
-        upper, use_miss_streak = max_channels, True
-
-    saved = misses = 0
-    for ch in range(1, upper + 1):
+    def save(ch: int) -> bool:
         frame = grab_frame(rewrite_channel(base, ch), timeout=timeout)
-        if frame is not None:
-            path = os.path.join(out_dir, f"{_safe_name(cam)}-ch{ch}.jpg")
-            if cv2.imwrite(path, frame):
-                saved += 1
-            misses = 0
-        elif use_miss_streak and saved:
-            misses += 1
-            if misses >= miss_streak:
-                break
+        if frame is None:
+            return False
+        path = os.path.join(out_dir, f"{_safe_name(cam)}-ch{ch}.jpg")
+        return bool(cv2.imwrite(path, frame))
+
+    # Known count: grab exactly channels 1..N (dead ones simply don't save).
+    if cam.channels and cam.channels > 0:
+        return sum(1 for ch in range(1, cam.channels + 1) if save(ch))
+
+    # Unknown: batch-probe, stopping when an entire batch yields nothing.
+    saved = 0
+    start = 1
+    while start <= max_channels:
+        end = min(start + batch_size, max_channels + 1)
+        got = [ch for ch in range(start, end) if save(ch)]
+        saved += len(got)
+        if not got:
+            break
+        start = end
     return saved
 
 
 def export_cameras(cameras: list[ResolvedCamera], out_root: str = "exports",
                    frames: int = 1, timeout: float = 10.0, workers: int = 6,
                    all_channels: bool = False, max_channels: int = 64,
-                   miss_streak: int = 2) -> str:
+                   batch_size: int = 10) -> str:
     """Export frames from every resolvable camera into a timestamped folder."""
     targets = [c for c in cameras if c.ok]
     ts = time.strftime("%Y%m%d-%H%M%S")
@@ -106,7 +109,7 @@ def export_cameras(cameras: list[ResolvedCamera], out_root: str = "exports",
 
     def work(cam: ResolvedCamera) -> int:
         if all_channels:
-            return _grab_all_channels(cam, out_dir, max_channels, timeout, miss_streak)
+            return _grab_all_channels(cam, out_dir, max_channels, timeout, batch_size)
         return _grab_current(cam, out_dir, frames, timeout)
 
     results: dict[str, int] = {}

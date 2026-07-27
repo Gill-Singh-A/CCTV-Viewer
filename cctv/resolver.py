@@ -34,25 +34,30 @@ RESOLVED_HEADER = ["name", "ip", "vendor", "model", "protocol",
 
 
 def count_channels(working_url: str, timeout: float = 6.0,
-                   max_channels: int = 64, miss_streak: int = 2) -> int:
-    """Count the live channels of a family by probing channel 1, 2, 3, …
+                   max_channels: int = 64, batch_size: int = 10) -> int:
+    """Return the highest live channel of a family (its framing range).
 
-    Stops after ``miss_streak`` consecutive empty channels once at least one has
-    responded (NVR channels are normally contiguous from 1). Returns 1 for a URL
-    that has no channel component (a single-lens camera).
+    Probes channels in batches of ``batch_size`` and stops only when a *whole*
+    batch is empty — so dead channels in the middle (e.g. channel 16 of 50) do
+    not truncate discovery. Returns the highest channel that produced a frame
+    (dead channels below it are still framed, just shown offline), or 1 for a
+    single-lens camera whose URL has no channel component.
     """
     if not supports_channel(working_url):
         return 1
-    found = misses = 0
-    for ch in range(1, max_channels + 1):
-        if probe_frame(rewrite_channel(working_url, ch), timeout=timeout):
-            found += 1
-            misses = 0
-        elif found:
-            misses += 1
-            if misses >= miss_streak:
-                break
-    return found or 1
+    top = 0
+    start = 1
+    while start <= max_channels:
+        end = min(start + batch_size, max_channels + 1)
+        found_in_batch = False
+        for ch in range(start, end):
+            if probe_frame(rewrite_channel(working_url, ch), timeout=timeout):
+                top = ch
+                found_in_batch = True
+        if not found_in_batch:
+            break
+        start = end
+    return top or 1
 
 
 # --------------------------------------------------------------------------
@@ -172,7 +177,7 @@ class Resolver:
     def __init__(self, db: CameraDB, probe_timeout: float = 8.0,
                  max_candidates: int = 25, try_defaults: bool = False,
                  reach_timeout: float = 2.0, count_channels_flag: bool = False,
-                 count_max: int = 64):
+                 count_max: int = 64, count_batch: int = 10):
         self.db = db
         self.probe_timeout = probe_timeout
         self.max_candidates = max_candidates
@@ -182,6 +187,7 @@ class Resolver:
         # Enumerate a resolved family's channels and record the count.
         self.count_channels_flag = count_channels_flag
         self.count_max = count_max
+        self.count_batch = count_batch
         # Many cameras/NVRs cap simultaneous RTSP sessions, so probing the same
         # IP from two workers at once makes one of them fail. Serialize per IP.
         self._ip_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
@@ -227,8 +233,8 @@ class Resolver:
                     rc.channels = 1
                 elif self.count_channels_flag:
                     rc.channels = count_channels(rc.working_url, self.probe_timeout,
-                                                 self.count_max)
-                    log.info("[%s] %d channel(s)", cam.label(), rc.channels)
+                                                 self.count_max, self.count_batch)
+                    log.info("[%s] channels up to %d", cam.label(), rc.channels)
             return rc
 
     def _resolve_one_locked(self, cam: CameraInput) -> ResolvedCamera:
@@ -331,8 +337,8 @@ def resolve_cameras(input_csv: str, db: CameraDB, cache_path: str = "resolved.cs
                     probe_timeout: float = 8.0, workers: int = 6,
                     retry_unresolved: bool = False, retry_timeout: float = 12.0,
                     reach_timeout: float = 2.0, max_candidates: int = 25,
-                    count_channels: bool = False,
-                    count_max: int = 64) -> list[ResolvedCamera]:
+                    count_channels: bool = False, count_max: int = 64,
+                    count_batch: int = 10) -> list[ResolvedCamera]:
     """High-level helper used by the CLI's resolve/view/export commands."""
     if use_cache and Path(cache_path).exists():
         cached = read_resolved(cache_path)
@@ -347,7 +353,8 @@ def resolve_cameras(input_csv: str, db: CameraDB, cache_path: str = "resolved.cs
     log.info("Resolving %d camera(s) ...", len(cams))
     resolver = Resolver(db, probe_timeout=probe_timeout, try_defaults=try_defaults,
                         reach_timeout=reach_timeout, max_candidates=max_candidates,
-                        count_channels_flag=count_channels, count_max=count_max)
+                        count_channels_flag=count_channels, count_max=count_max,
+                        count_batch=count_batch)
     resolved = resolver.resolve_all(cams, workers=workers)
 
     if retry_unresolved:
@@ -364,7 +371,7 @@ def resolve_cameras(input_csv: str, db: CameraDB, cache_path: str = "resolved.cs
                                       reach_timeout=reach_timeout,
                                       max_candidates=max_candidates,
                                       count_channels_flag=count_channels,
-                                      count_max=count_max)
+                                      count_max=count_max, count_batch=count_batch)
             retried = retry_resolver.resolve_all([cams[i] for i in pending], workers=1)
             recovered = 0
             for slot, i in enumerate(pending):

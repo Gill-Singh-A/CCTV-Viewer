@@ -48,6 +48,7 @@ def _resolve(args):
         reach_timeout=args.reach_timeout,
         max_candidates=0 if args.all_templates else args.max_candidates,
         count_channels=args.count_channels, count_max=args.count_max,
+        count_batch=args.channel_batch,
     )
 
 
@@ -91,7 +92,8 @@ def cmd_export(args: argparse.Namespace) -> int:
     export_cameras(resolved, out_root=args.out, frames=args.frames,
                    timeout=args.timeout, workers=args.workers,
                    all_channels=args.all_channels,
-                   max_channels=args.max_channels)
+                   max_channels=args.max_channels,
+                   batch_size=args.channel_batch)
     return 0
 
 
@@ -140,6 +142,9 @@ def _add_resolve_opts(p: argparse.ArgumentParser,
                         "store it; viewers/export then cap to that number.")
     p.add_argument("--count-max", type=int, default=64,
                    help="Highest channel probed when counting (default 64).")
+    p.add_argument("--channel-batch", type=int, default=10,
+                   help="Probe channels in batches of this size; stop only when a "
+                        "whole batch is empty (tolerates dead channels). Default 10.")
 
 
 def build_parser() -> argparse.ArgumentParser:
