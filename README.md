@@ -204,4 +204,3 @@ tests/                unit tests (url + db logic)
 - `resolved.csv`, real input CSVs and exported images are git-ignored because
   they contain credentials or captured footage.
 - Run `python -m pytest tests/` for the offline unit tests.
-```
