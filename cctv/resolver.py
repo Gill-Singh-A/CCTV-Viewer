@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import csv
 import re
+import threading
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Iterable, Optional
@@ -150,6 +152,14 @@ class Resolver:
         self.probe_timeout = probe_timeout
         self.max_candidates = max_candidates
         self.try_defaults = try_defaults
+        # Many cameras/NVRs cap simultaneous RTSP sessions, so probing the same
+        # IP from two workers at once makes one of them fail. Serialize per IP.
+        self._ip_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
+        self._locks_guard = threading.Lock()
+
+    def _ip_lock(self, ip: str) -> threading.Lock:
+        with self._locks_guard:
+            return self._ip_locks[ip]
 
     def _candidate_urls(self, cam: CameraInput, fp,
                         username: str, password: str) -> list[tuple[str, str]]:
@@ -178,6 +188,12 @@ class Resolver:
         return out
 
     def resolve_one(self, cam: CameraInput) -> ResolvedCamera:
+        # Hold the per-IP lock across fingerprint + probing so cameras that
+        # share an IP (or duplicate rows) don't contend for RTSP sessions.
+        with self._ip_lock(cam.ip):
+            return self._resolve_one_locked(cam)
+
+    def _resolve_one_locked(self, cam: CameraInput) -> ResolvedCamera:
         fp = fingerprint(cam)
         rc = ResolvedCamera(name=cam.name, ip=cam.ip,
                             vendor=fp.vendor or "", model=fp.model or "")
