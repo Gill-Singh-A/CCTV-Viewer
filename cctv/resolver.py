@@ -265,8 +265,9 @@ def read_resolved(path: str) -> list[ResolvedCamera]:
 
 def resolve_cameras(input_csv: str, db: CameraDB, cache_path: str = "resolved.csv",
                     use_cache: bool = True, try_defaults: bool = False,
-                    probe_timeout: float = 8.0,
-                    workers: int = 6) -> list[ResolvedCamera]:
+                    probe_timeout: float = 8.0, workers: int = 6,
+                    retry_unresolved: bool = False,
+                    retry_timeout: float = 12.0) -> list[ResolvedCamera]:
     """High-level helper used by the CLI's resolve/view/export commands."""
     if use_cache and Path(cache_path).exists():
         cached = read_resolved(cache_path)
@@ -281,6 +282,22 @@ def resolve_cameras(input_csv: str, db: CameraDB, cache_path: str = "resolved.cs
     log.info("Resolving %d camera(s) ...", len(cams))
     resolver = Resolver(db, probe_timeout=probe_timeout, try_defaults=try_defaults)
     resolved = resolver.resolve_all(cams, workers=workers)
+
+    if retry_unresolved:
+        pending = [i for i, r in enumerate(resolved) if not r.ok]
+        if pending:
+            log.info("Retrying %d unresolved camera(s) serially (timeout %.0fs) ...",
+                     len(pending), retry_timeout)
+            retry_resolver = Resolver(db, probe_timeout=retry_timeout,
+                                      try_defaults=try_defaults)
+            retried = retry_resolver.resolve_all([cams[i] for i in pending], workers=1)
+            recovered = 0
+            for slot, i in enumerate(pending):
+                if retried[slot].ok:
+                    resolved[i] = retried[slot]
+                    recovered += 1
+            log.info("Retry pass recovered %d/%d camera(s).", recovered, len(pending))
+
     write_resolved(cache_path, resolved)
     ok = sum(1 for r in resolved if r.ok)
     log.info("Resolved %d/%d cameras. Cache written to %s.",

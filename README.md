@@ -105,6 +105,16 @@ credentials** and is git-ignored). `view` and `export` reuse this cache; pass
 `--no-cache` to force re-resolution. Add `--try-defaults` to fall back to
 scraped default credentials when the supplied ones fail.
 
+Resolving many cameras at once is fast but a busy device can occasionally miss
+its probe window. Add `--retry-unresolved` to run a second, serial pass over
+anything that came back `UNRESOLVED` (with a longer `--retry-timeout`), which
+recovers flaky/busy cameras — only genuinely offline or wrong-password devices
+stay unresolved:
+
+```bash
+python cctv_viewer.py resolve -i cameras.csv --retry-unresolved
+```
+
 ### 4. View
 
 ```bash
@@ -163,6 +173,8 @@ found some) and writes `exports/<timestamp>/<camera>-ch<N>.jpg`.
 | `--try-defaults` | retry with scraped vendor default credentials |
 | `--timeout` | per-URL probe timeout, seconds (default 8) |
 | `--workers` | cameras resolved/exported in parallel (default 6) |
+| `--retry-unresolved` | after the parallel pass, retry `UNRESOLVED` cameras serially with a longer timeout (recovers flaky/busy devices) |
+| `--retry-timeout` | per-URL probe timeout for the retry pass (default 12) |
 | `-v, --verbose` | debug logging |
 
 ## Project layout

@@ -44,6 +44,7 @@ def _resolve(args):
         args.input, db, cache_path=args.cache,
         use_cache=not args.no_cache, try_defaults=args.try_defaults,
         probe_timeout=args.timeout, workers=args.workers,
+        retry_unresolved=args.retry_unresolved, retry_timeout=args.retry_timeout,
     )
 
 
@@ -103,6 +104,11 @@ def _add_resolve_opts(p: argparse.ArgumentParser) -> None:
                    help="Per-URL probe timeout in seconds.")
     p.add_argument("--workers", type=int, default=6,
                    help="Parallel cameras during resolve/export.")
+    p.add_argument("--retry-unresolved", action="store_true",
+                   help="After the parallel pass, retry UNRESOLVED cameras "
+                        "serially with a longer timeout (recovers flaky/busy devices).")
+    p.add_argument("--retry-timeout", type=float, default=12.0,
+                   help="Per-URL probe timeout for the --retry-unresolved pass.")
 
 
 def build_parser() -> argparse.ArgumentParser:
