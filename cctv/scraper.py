@@ -83,6 +83,7 @@ CURATED_DEFAULT_CREDENTIALS: dict[str, list[tuple[str, str]]] = {
     "Pelco":         [("admin", "admin")],
     "Avigilon":      [("administrator", "")],
     "Arecont Vision": [("admin", ""), ("admin", "admin")],
+    "Arecont":       [("admin", ""), ("admin", "admin")],  # ispyconnect brand name
     "Grandstream":   [("admin", "admin")],
     "Digital Watchdog": [("admin", "admin"), ("admin", "")],
     "Toshiba":       [("root", "ikwd"), ("admin", "admin")],
