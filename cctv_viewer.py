@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""CCTV Viewer — command-line entry point.
+
+Subcommands:
+  scrape    Build the ispyconnect camera-URL database (CSV).
+  resolve   Fingerprint cameras from a credentials CSV and find working URLs.
+  view      Open the OpenCV grid viewer (auto-resolves first).
+  export    Bulk-export still frames from all cameras.
+
+For authorized use only — operate cameras you own or have explicit permission
+to access.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+
+from cctv.util import get_logger, set_verbose
+
+log = get_logger("cctv.cli")
+
+
+def cmd_scrape(args: argparse.Namespace) -> int:
+    from cctv.scraper import scrape
+    vendors = [v.strip() for v in args.vendors.split(",")] if args.vendors else None
+    n_rows, n_creds = scrape(out_cameras=args.out, out_creds=args.creds_out,
+                             vendors=vendors, limit=args.limit,
+                             delay=args.delay, refresh=args.refresh)
+    log.info("Wrote %s (%d rows) and %s (%d default-cred entries).",
+             args.out, n_rows, args.creds_out, n_creds)
+    return 0
+
+
+def _load_db(args) -> "object":
+    from cctv.db import CameraDB
+    return CameraDB.load(args.db, args.creds_db)
+
+
+def _resolve(args):
+    from cctv.resolver import resolve_cameras
+    db = _load_db(args)
+    return resolve_cameras(
+        args.input, db, cache_path=args.cache,
+        use_cache=not args.no_cache, try_defaults=args.try_defaults,
+        probe_timeout=args.timeout, workers=args.workers,
+    )
+
+
+def cmd_resolve(args: argparse.Namespace) -> int:
+    resolved = _resolve(args)
+    ok = [r for r in resolved if r.ok]
+    print(f"\n{'NAME':22} {'IP':16} {'VENDOR':12} {'STATUS':11} METHOD")
+    print("-" * 78)
+    for r in resolved:
+        print(f"{r.name[:21]:22} {r.ip[:15]:16} {(r.vendor or '?')[:11]:12} "
+              f"{r.status:11} {r.method}")
+    print(f"\n{len(ok)}/{len(resolved)} cameras resolved. "
+          f"Full details (with URLs) cached in {args.cache}")
+    return 0 if ok else 1
+
+
+def cmd_view(args: argparse.Namespace) -> int:
+    from cctv.viewer import view
+    resolved = _resolve(args)
+    if not any(r.ok for r in resolved):
+        log.error("No cameras resolved — nothing to view.")
+        return 1
+    view(resolved, mode=args.mode)
+    return 0
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    from cctv.export import export_cameras
+    resolved = _resolve(args)
+    if not any(r.ok for r in resolved):
+        log.error("No cameras resolved — nothing to export.")
+        return 1
+    export_cameras(resolved, out_root=args.out, frames=args.frames,
+                   timeout=args.timeout, workers=args.workers)
+    return 0
+
+
+def _add_resolve_opts(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--input", "-i", required=True,
+                   help="Camera credentials CSV (ip,username,password,...).")
+    p.add_argument("--db", default="data/cameras.csv", help="Scraped camera DB CSV.")
+    p.add_argument("--creds-db", default="data/default_credentials.csv",
+                   help="Scraped default-credentials CSV.")
+    p.add_argument("--cache", default="resolved.csv",
+                   help="Where to read/write resolved stream URLs (has credentials).")
+    p.add_argument("--no-cache", action="store_true",
+                   help="Force re-resolution instead of using the cache.")
+    p.add_argument("--try-defaults", action="store_true",
+                   help="If supplied creds fail, retry with scraped vendor defaults.")
+    p.add_argument("--timeout", type=float, default=8.0,
+                   help="Per-URL probe timeout in seconds.")
+    p.add_argument("--workers", type=int, default=6,
+                   help="Parallel cameras during resolve/export.")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="cctv_viewer",
+        description="Fingerprint, resolve, view and export IP-camera streams "
+                    "from credentials only. Authorized use only.")
+    parser.add_argument("-v", "--verbose", action="store_true")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    ps = sub.add_parser("scrape", help="Build the ispyconnect camera-URL database.")
+    ps.add_argument("--out", default="data/cameras.csv")
+    ps.add_argument("--creds-out", default="data/default_credentials.csv")
+    ps.add_argument("--vendors", help="Comma-separated brand slugs to limit scope.")
+    ps.add_argument("--limit", type=int, help="Only scrape the first N brands.")
+    ps.add_argument("--delay", type=float, default=0.5, help="Delay between requests.")
+    ps.add_argument("--refresh", action="store_true", help="Ignore the HTML cache.")
+    ps.set_defaults(func=cmd_scrape)
+
+    pr = sub.add_parser("resolve", help="Fingerprint cameras and find working URLs.")
+    _add_resolve_opts(pr)
+    pr.set_defaults(func=cmd_resolve)
+
+    pv = sub.add_parser("view", help="Open the OpenCV grid viewer.")
+    _add_resolve_opts(pv)
+    pv.add_argument("--mode", choices=["single", "grid4", "grid9", "grid16"],
+                    default="grid4", help="Initial grid layout.")
+    pv.set_defaults(func=cmd_view)
+
+    pe = sub.add_parser("export", help="Bulk-export still frames.")
+    _add_resolve_opts(pe)
+    pe.add_argument("--out", default="exports", help="Output root folder.")
+    pe.add_argument("--frames", type=int, default=1, help="Frames per camera.")
+    pe.set_defaults(func=cmd_export)
+
+    return parser
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    set_verbose(getattr(args, "verbose", False))
+    try:
+        return args.func(args)
+    except FileNotFoundError as exc:
+        log.error("File not found: %s", exc)
+        return 2
+    except KeyboardInterrupt:
+        log.info("Interrupted.")
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())
