@@ -9,14 +9,15 @@ and it will:
    locally scraped [ispyconnect.com](https://www.ispyconnect.com/cameras)
    database of camera connection-URL templates, validating each candidate by
    actually pulling a live frame.
-3. **View** the live feeds in an OpenCV grid (single / 4 / 9 / 16 view) — or a
-   Flask web dashboard in the browser.
+3. **View** a camera family's channels in a resizable OpenCV grid — or a Flask
+   web dashboard in the browser.
 4. **Export** still frames from every camera in bulk — including every channel
    of an NVR/DVR.
 
 Cameras on an **NVR/DVR** expose multiple channels behind one IP. You don't have
-to know how many: the channel is **switchable live in both viewers**, and
-`export --all-channels` walks every channel automatically.
+to know how many: the viewers show one **family** (CSV row) at a time and tile
+its channels — switch families from the keyboard (OpenCV) or a dropdown (web) —
+and `export --all-channels` walks every channel automatically.
 
 > ⚠️ **Authorized use only.** Use this tool exclusively on cameras you own or
 > have explicit written permission to access. You are responsible for complying
@@ -152,15 +153,21 @@ python cctv_viewer.py resolve -i cameras.csv \
 python cctv_viewer.py view -i cameras.csv --mode grid4
 ```
 
+The viewer is **family-centric**: a *family* is one input-CSV row (one IP / NVR),
+and the grid tiles the **channels of the currently-selected family**. For a
+single-lens camera that's just one tile; for an NVR it's channels 1, 2, 3, … You
+switch families and page through channels from the keyboard. The window is
+resizable and the canvas is sized to your screen, so it adapts to the display.
+
 Keyboard controls (focus the video window):
 
 | Key | Action |
 |-----|--------|
-| `1` `4` `9` `6` | single / 2×2 / 3×3 / 4×4 layout |
-| `n` `p` | next / previous page of cameras |
-| `.` `,` (or `]` `[`) | next / previous **channel** (all channel-capable cameras) |
+| `]` `[` | next / previous **camera family** (CSV row) |
+| `n` `p` | next / previous page of **channels** within the family |
+| `1` `4` `9` `6` | layout: 1 / 4 / 9 / 16 channels per page |
 | `s` | save a snapshot of the current canvas |
-| `e` | export one frame from every camera now |
+| `e` | export one frame from every visible channel now |
 | `q` / `Esc` | quit |
 
 #### Web dashboard
@@ -171,11 +178,13 @@ Prefer a browser? Add `--web` (the OpenCV grid is the default):
 python cctv_viewer.py view -i cameras.csv --web --port 5000
 ```
 
-Then open <http://127.0.0.1:5000>. Each camera is served as an MJPEG stream in a
-responsive grid with Single/4/9/16 layout buttons, paging, per-tile **channel
-&minus;/&plus;** controls (for NVR/DVR cameras) and an **Export frames** button.
-Use `--host 0.0.0.0` to expose it on your network (only on trusted networks —
-the dashboard is unauthenticated).
+Then open <http://127.0.0.1:5000>. Pick a family from the **dropdown** and its
+channels are streamed (MJPEG) into a grid that **fills the viewport** and is
+fully responsive. Layout buttons (1/4/9/16), **« Ch / Ch »** channel paging and
+an **Export** button round it out. Only the channels currently on screen are
+streamed, so one NVR is never asked for more sessions than it's showing. Use
+`--host 0.0.0.0` to expose it on your network (only on trusted networks — the
+dashboard is unauthenticated).
 
 ### 5. Bulk export
 

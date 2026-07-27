@@ -155,7 +155,10 @@ class CameraStream:
         with self._lock:
             return None if self._frame is None else self._frame.copy()
 
-    def stop(self):
+    def stop(self, join_timeout: float = 0.3):
+        # Short join keeps UI actions (family/channel switch) snappy; the
+        # capture thread is a daemon and exits on its own after its current
+        # blocking read returns.
         self._stop.set()
         if self._thread is not None:
-            self._thread.join(timeout=2.0)
+            self._thread.join(timeout=join_timeout)
