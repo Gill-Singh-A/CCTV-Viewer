@@ -295,8 +295,8 @@ def resolve_cameras(input_csv: str, db: CameraDB, cache_path: str = "resolved.cs
     """High-level helper used by the CLI's resolve/view/export commands."""
     if use_cache and Path(cache_path).exists():
         cached = read_resolved(cache_path)
-        log.info("Using cached resolution from %s (%d cameras). "
-                 "Pass --no-cache to re-resolve.", cache_path, len(cached))
+        log.info("Using cached resolution from %s (%d cameras).",
+                 cache_path, len(cached))
         return cached
     cams = load_camera_list(input_csv)
     if not cams:

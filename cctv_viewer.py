@@ -42,7 +42,7 @@ def _resolve(args):
     db = _load_db(args)
     return resolve_cameras(
         args.input, db, cache_path=args.cache,
-        use_cache=not args.no_cache, try_defaults=args.try_defaults,
+        use_cache=args.use_cache, try_defaults=args.try_defaults,
         probe_timeout=args.timeout, workers=args.workers,
         retry_unresolved=args.retry_unresolved, retry_timeout=args.retry_timeout,
         reach_timeout=args.reach_timeout,
@@ -92,7 +92,8 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
-def _add_resolve_opts(p: argparse.ArgumentParser) -> None:
+def _add_resolve_opts(p: argparse.ArgumentParser,
+                      read_cache_by_default: bool) -> None:
     p.add_argument("--input", "-i", required=True,
                    help="Camera credentials CSV (ip,username,password,...).")
     p.add_argument("--db", default="data/cameras.csv", help="Scraped camera DB CSV.")
@@ -100,8 +101,17 @@ def _add_resolve_opts(p: argparse.ArgumentParser) -> None:
                    help="Scraped default-credentials CSV.")
     p.add_argument("--cache", default="resolved.csv",
                    help="Where to read/write resolved stream URLs (has credentials).")
-    p.add_argument("--no-cache", action="store_true",
-                   help="Force re-resolution instead of using the cache.")
+    # `view`/`export` reuse the cache for fast startup; `resolve` re-resolves by
+    # default (its whole job) but still writes the cache for the others to use.
+    if read_cache_by_default:
+        p.add_argument("--no-cache", dest="use_cache", action="store_false",
+                       help="Ignore the resolved cache and re-resolve fresh.")
+        p.set_defaults(use_cache=True)
+    else:
+        p.add_argument("--use-cache", dest="use_cache", action="store_true",
+                       help="Reuse an existing resolved cache instead of "
+                            "resolving fresh.")
+        p.set_defaults(use_cache=False)
     p.add_argument("--try-defaults", action="store_true",
                    help="If supplied creds fail, retry with scraped vendor defaults.")
     p.add_argument("--timeout", type=float, default=8.0,
@@ -136,11 +146,11 @@ def build_parser() -> argparse.ArgumentParser:
     ps.set_defaults(func=cmd_scrape)
 
     pr = sub.add_parser("resolve", help="Fingerprint cameras and find working URLs.")
-    _add_resolve_opts(pr)
+    _add_resolve_opts(pr, read_cache_by_default=False)
     pr.set_defaults(func=cmd_resolve)
 
     pv = sub.add_parser("view", help="Open the viewer (OpenCV grid by default).")
-    _add_resolve_opts(pv)
+    _add_resolve_opts(pv, read_cache_by_default=True)
     pv.add_argument("--mode", choices=["single", "grid4", "grid9", "grid16"],
                     default="grid4", help="Initial grid layout (OpenCV viewer).")
     pv.add_argument("--web", action="store_true",
@@ -150,7 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
     pv.set_defaults(func=cmd_view)
 
     pe = sub.add_parser("export", help="Bulk-export still frames.")
-    _add_resolve_opts(pe)
+    _add_resolve_opts(pe, read_cache_by_default=True)
     pe.add_argument("--out", default="exports", help="Output root folder.")
     pe.add_argument("--frames", type=int, default=1, help="Frames per camera.")
     pe.add_argument("--all-channels", action="store_true",

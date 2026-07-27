@@ -117,9 +117,12 @@ python cctv_viewer.py resolve -i cameras.csv
 ```
 
 Prints a summary table and writes `resolved.csv` (which **contains
-credentials** and is git-ignored). `view` and `export` reuse this cache; pass
-`--no-cache` to force re-resolution. Add `--try-defaults` to fall back to
-scraped default credentials when the supplied ones fail.
+credentials** and is git-ignored). `resolve` **always re-resolves** (that's its
+job) and overwrites the cache — pass `--use-cache` if you deliberately want to
+reprint the last result without re-probing. `view` and `export`, by contrast,
+**reuse** `resolved.csv` for fast startup and take `--no-cache` to force a fresh
+resolve. Add `--try-defaults` to fall back to scraped default credentials when
+the supplied ones fail.
 
 Resolving many cameras at once is fast but a busy device can occasionally miss
 its probe window (or briefly look unreachable under load). Add
@@ -197,7 +200,8 @@ found some) and writes `exports/<timestamp>/<camera>-ch<N>.jpg`.
 | `-i, --input` | camera credentials CSV (required) |
 | `--db` / `--creds-db` | scraped DB paths (default under `data/`) |
 | `--cache` | resolved-URL cache path (default `resolved.csv`) |
-| `--no-cache` | ignore the cache and re-resolve |
+| `--no-cache` | *(view/export)* ignore the cache and re-resolve |
+| `--use-cache` | *(resolve)* reprint the cached result instead of re-resolving |
 | `--try-defaults` | retry with scraped vendor default credentials |
 | `--timeout` | per-URL probe timeout, seconds (default 8) |
 | `--workers` | cameras resolved/exported in parallel (default 6) |
