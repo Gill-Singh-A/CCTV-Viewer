@@ -94,6 +94,54 @@ def build_url(protocol: str, ip: str, port: int, path: str,
     return f"{protocol}://{auth}{ip}:{port}{filled_path}"
 
 
+# Channel handling -----------------------------------------------------------
+# Different vendors encode the NVR/DVR channel differently in the stream URL.
+# These helpers read and rewrite the channel in place so it can be changed
+# live from the viewer and enumerated for bulk export.
+_CHANNEL_QUERY_RE = re.compile(r"([?&](?:channel|chn|chID|channelId|ch)=)(\d+)", re.I)
+_CHANNEL_HIK_RE = re.compile(r"(/(?:ISAPI/)?[Ss]treaming/[Cc]hannels/)(\d+)")
+_CHANNEL_PATH_RE = re.compile(r"(/(?:live/|cam/)?ch)(\d+)\b", re.I)
+
+
+def channel_of(url: str) -> Optional[int]:
+    """Return the channel number encoded in ``url``, or None if it has none."""
+    m = _CHANNEL_QUERY_RE.search(url)
+    if m:
+        return int(m.group(2))
+    m = _CHANNEL_HIK_RE.search(url)
+    if m:
+        num = int(m.group(2))
+        return num // 100 if num >= 100 else num
+    m = _CHANNEL_PATH_RE.search(url)
+    if m:
+        return int(m.group(2))
+    return None
+
+
+def rewrite_channel(url: str, channel: int) -> str:
+    """Return ``url`` pointing at ``channel``; unchanged if it has no channel.
+
+    Handles query-style (``channel=N``), Hikvision ``Channels/CSS`` (where the
+    trailing two digits are the substream) and simple ``/chN`` path styles.
+    """
+    if _CHANNEL_QUERY_RE.search(url):
+        return _CHANNEL_QUERY_RE.sub(lambda m: f"{m.group(1)}{channel}", url)
+    m = _CHANNEL_HIK_RE.search(url)
+    if m:
+        num = int(m.group(2))
+        stream = num % 100 if num >= 100 else 1  # preserve main/sub stream
+        new = channel * 100 + stream
+        return url[:m.start(2)] + str(new) + url[m.end(2):]
+    m = _CHANNEL_PATH_RE.search(url)
+    if m:
+        return url[:m.start(2)] + str(channel) + url[m.end(2):]
+    return url
+
+
+def supports_channel(url: str) -> bool:
+    return channel_of(url) is not None
+
+
 def slug_to_vendor(slug: str) -> str:
     """'hikvision' / 'q-see' -> a human-ish display vendor name."""
     return " ".join(part.capitalize() for part in slug.replace("_", "-").split("-"))

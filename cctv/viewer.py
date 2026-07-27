@@ -23,7 +23,7 @@ import numpy as np
 
 from .capture import CameraStream
 from .models import ResolvedCamera
-from .util import get_logger
+from .util import channel_of, get_logger, rewrite_channel, supports_channel
 
 log = get_logger("cctv.viewer")
 
@@ -60,12 +60,14 @@ def _fit(frame: np.ndarray, w: int, h: int) -> np.ndarray:
     return canvas
 
 
-def _label(cell: np.ndarray, name: str, online: bool) -> None:
+def _label(cell: np.ndarray, name: str, online: bool,
+           channel: "int | None" = None) -> None:
     h, w = cell.shape[:2]
     cv2.rectangle(cell, (0, 0), (w, 22), (0, 0, 0), -1)
     color = (80, 220, 80) if online else (60, 60, 220)
     cv2.circle(cell, (12, 11), 5, color, -1)
-    cv2.putText(cell, name[:40], (24, 16), cv2.FONT_HERSHEY_SIMPLEX,
+    text = name[:34] + (f"  ch{channel}" if channel is not None else "")
+    cv2.putText(cell, text, (24, 16), cv2.FONT_HERSHEY_SIMPLEX,
                 0.5, (240, 240, 240), 1, cv2.LINE_AA)
 
 
@@ -81,6 +83,24 @@ class GridViewer:
         self.page = 0
         self.streams = [CameraStream(c.name or c.ip, c.working_url).start()
                         for c in self.resolved]
+        # per-camera channel state for live switching (NVR/DVR)
+        self.base_urls = [c.working_url for c in self.resolved]
+        self.channels = [channel_of(u) or 1 for u in self.base_urls]
+
+    def _shift_channel(self, delta: int) -> None:
+        """Change the channel of every channel-capable stream (live)."""
+        changed = []
+        for i, base in enumerate(self.base_urls):
+            if not supports_channel(base):
+                continue
+            new = max(1, self.channels[i] + delta)
+            if new != self.channels[i]:
+                self.channels[i] = new
+                self.streams[i].switch(rewrite_channel(base, new))
+                changed.append((self.streams[i].name, new))
+        if changed:
+            log.info("channel %+d -> %s", delta,
+                     ", ".join(f"{n}:ch{c}" for n, c in changed))
 
     # -- rendering --------------------------------------------------------
     def _compose(self) -> np.ndarray:
@@ -98,7 +118,8 @@ class GridViewer:
                                         "CONNECTING...", stream.name)
                 else:
                     cell = _fit(frame, self.cell_w, self.cell_h)
-                _label(cell, stream.name, stream.online)
+                ch = self.channels[idx] if supports_channel(self.base_urls[idx]) else None
+                _label(cell, stream.name, stream.online, channel=ch)
             else:
                 cell = np.zeros((self.cell_h, self.cell_w, 3), np.uint8)
             tiles.append(cell)
@@ -110,7 +131,7 @@ class GridViewer:
         online = sum(1 for s in self.streams if s.online)
         txt = (f"cams:{len(self.streams)} online:{online} "
                f"layout:{self.cells} page:{self.page + 1}/{n_pages}  "
-               f"[1/4/9/6] [n/p] [s]nap [e]xport [q]uit")
+               f"[1/4/9/6] [n/p]age [,/.]channel [s]nap [e]xport [q]uit")
         h = canvas.shape[0]
         cv2.rectangle(canvas, (0, h - 22), (canvas.shape[1], h), (0, 0, 0), -1)
         cv2.putText(canvas, txt, (8, h - 7), cv2.FONT_HERSHEY_SIMPLEX,
@@ -152,6 +173,10 @@ class GridViewer:
                 elif key == ord("p"):
                     n_pages = max(1, math.ceil(len(self.streams) / self.cells))
                     self.page = (self.page - 1) % n_pages
+                elif key in (ord("."), ord("]")):
+                    self._shift_channel(+1)
+                elif key in (ord(","), ord("[")):
+                    self._shift_channel(-1)
                 elif key == ord("s"):
                     self._snapshot(canvas)
                 elif key == ord("e"):

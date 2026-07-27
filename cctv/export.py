@@ -1,10 +1,11 @@
-"""Bulk-export still frames from many cameras.
+"""Bulk-export still frames from many cameras (optionally every NVR channel).
 
-Two entry points:
-  * :func:`export_cameras` — open each resolved camera fresh, grab N frames,
-    write to ``exports/<timestamp>/``. Used by the ``export`` CLI command.
+Entry points:
+  * :func:`export_cameras` — open each resolved camera fresh, grab N frames (or
+    one frame per channel when ``all_channels=True``), write to
+    ``exports/<timestamp>/``. Used by the ``export`` CLI command.
   * :func:`export_streams` — grab the latest frame from already-running
-    :class:`~cctv.capture.CameraStream` objects. Used by the viewer's ``e`` key.
+    :class:`~cctv.capture.CameraStream` objects. Used by the viewers.
 """
 
 from __future__ import annotations
@@ -15,9 +16,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import cv2
 
-from .capture import CameraStream
+from .capture import CameraStream, grab_frame
 from .models import ResolvedCamera
-from .util import get_logger
+from .util import channel_of, get_logger, rewrite_channel, supports_channel
 
 log = get_logger("cctv.export")
 
@@ -27,9 +28,9 @@ def _safe_name(cam: ResolvedCamera) -> str:
     return "".join(c if c.isalnum() or c in "-_." else "_" for c in base)
 
 
-def _grab_frames(cam: ResolvedCamera, out_dir: str, frames: int,
-                 timeout: float) -> int:
-    """Open the stream, save up to ``frames`` frames. Returns count saved."""
+def _grab_current(cam: ResolvedCamera, out_dir: str, frames: int,
+                  timeout: float) -> int:
+    """Save up to ``frames`` frames from the camera's current channel."""
     stream = CameraStream(cam.name or cam.ip, cam.working_url).start()
     saved = 0
     deadline = time.time() + timeout
@@ -43,33 +44,67 @@ def _grab_frames(cam: ResolvedCamera, out_dir: str, frames: int,
                 time.sleep(0.2)
             if frame is None:
                 break
-            name = _safe_name(cam)
             suffix = f"-{i + 1}" if frames > 1 else ""
-            path = os.path.join(out_dir, f"{name}{suffix}.jpg")
+            path = os.path.join(out_dir, f"{_safe_name(cam)}{suffix}.jpg")
             if cv2.imwrite(path, frame):
                 saved += 1
             if frames > 1:
-                time.sleep(0.3)  # small gap between multi-frame grabs
+                time.sleep(0.3)
     finally:
         stream.stop()
     return saved
 
 
+def _grab_all_channels(cam: ResolvedCamera, out_dir: str, max_channels: int,
+                       timeout: float, miss_streak: int) -> int:
+    """Save one frame per live channel of an NVR/DVR.
+
+    Stops after ``miss_streak`` consecutive empty channels once at least one
+    channel has produced a frame (channels are normally contiguous from 1).
+    """
+    base = cam.working_url
+    if not supports_channel(base):
+        return _grab_current(cam, out_dir, 1, timeout)
+
+    saved = misses = 0
+    for ch in range(1, max_channels + 1):
+        frame = grab_frame(rewrite_channel(base, ch), timeout=timeout)
+        if frame is not None:
+            path = os.path.join(out_dir, f"{_safe_name(cam)}-ch{ch}.jpg")
+            if cv2.imwrite(path, frame):
+                saved += 1
+            misses = 0
+        elif saved:
+            misses += 1
+            if misses >= miss_streak:
+                break
+    return saved
+
+
 def export_cameras(cameras: list[ResolvedCamera], out_root: str = "exports",
-                   frames: int = 1, timeout: float = 10.0,
-                   workers: int = 6) -> str:
+                   frames: int = 1, timeout: float = 10.0, workers: int = 6,
+                   all_channels: bool = False, max_channels: int = 64,
+                   miss_streak: int = 2) -> str:
     """Export frames from every resolvable camera into a timestamped folder."""
     targets = [c for c in cameras if c.ok]
     ts = time.strftime("%Y%m%d-%H%M%S")
     out_dir = os.path.join(out_root, ts)
     os.makedirs(out_dir, exist_ok=True)
-    log.info("Exporting %d frame(s) from %d camera(s) -> %s",
-             frames, len(targets), out_dir)
+    if all_channels:
+        log.info("Exporting all channels (max %d) from %d camera(s) -> %s",
+                 max_channels, len(targets), out_dir)
+    else:
+        log.info("Exporting %d frame(s) from %d camera(s) -> %s",
+                 frames, len(targets), out_dir)
+
+    def work(cam: ResolvedCamera) -> int:
+        if all_channels:
+            return _grab_all_channels(cam, out_dir, max_channels, timeout, miss_streak)
+        return _grab_current(cam, out_dir, frames, timeout)
 
     results: dict[str, int] = {}
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futs = {pool.submit(_grab_frames, c, out_dir, frames, timeout): c
-                for c in targets}
+        futs = {pool.submit(work, c): c for c in targets}
         for fut in as_completed(futs):
             cam = futs[fut]
             try:
@@ -79,12 +114,12 @@ def export_cameras(cameras: list[ResolvedCamera], out_root: str = "exports",
                 log.warning("[%s] export failed: %s", cam.label(), exc)
 
     ok = sum(1 for v in results.values() if v > 0)
+    total = sum(results.values())
     for label, n in results.items():
-        status = f"{n} frame(s)" if n else "FAILED"
-        log.info("  %-30s %s", label, status)
+        log.info("  %-30s %s", label, f"{n} frame(s)" if n else "FAILED")
     skipped = len(cameras) - len(targets)
-    log.info("Export complete: %d/%d cameras produced frames%s. Folder: %s",
-             ok, len(targets),
+    log.info("Export complete: %d image(s) from %d/%d cameras%s. Folder: %s",
+             total, ok, len(targets),
              f" ({skipped} unresolved skipped)" if skipped else "", out_dir)
     return out_dir
 
@@ -92,7 +127,7 @@ def export_cameras(cameras: list[ResolvedCamera], out_root: str = "exports",
 def export_streams(cameras: list[ResolvedCamera],
                    streams: list[CameraStream],
                    out_root: str = "exports") -> str:
-    """Snapshot the latest frame from live streams (viewer 'e' shortcut)."""
+    """Snapshot the latest frame from live streams (viewer export shortcut)."""
     ts = time.strftime("%Y%m%d-%H%M%S")
     out_dir = os.path.join(out_root, ts)
     os.makedirs(out_dir, exist_ok=True)
@@ -101,7 +136,9 @@ def export_streams(cameras: list[ResolvedCamera],
         frame = stream.read()
         if frame is None:
             continue
-        path = os.path.join(out_dir, f"{_safe_name(cam)}.jpg")
+        ch = channel_of(stream.url)
+        suffix = f"-ch{ch}" if ch is not None else ""
+        path = os.path.join(out_dir, f"{_safe_name(cam)}{suffix}.jpg")
         if cv2.imwrite(path, frame):
             saved += 1
     log.info("Exported %d live frame(s) -> %s", saved, out_dir)

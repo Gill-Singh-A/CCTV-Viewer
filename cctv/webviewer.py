@@ -15,7 +15,7 @@ from flask import Flask, Response, jsonify, render_template_string, request
 from .capture import CameraStream
 from .export import export_streams
 from .models import ResolvedCamera
-from .util import get_logger
+from .util import channel_of, get_logger, rewrite_channel, supports_channel
 
 log = get_logger("cctv.web")
 
@@ -47,6 +47,11 @@ INDEX_HTML = """<!doctype html>
                  background: rgba(0,0,0,.55); font-size: .78rem; display: flex;
                  align-items: center; gap: 6px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #4c4; }
+  .chan { position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%);
+          display: flex; align-items: center; gap: 6px; background: rgba(0,0,0,.6);
+          border-radius: 20px; padding: 2px 6px; font-size: .8rem; }
+  .chan button { padding: .1rem .5rem; border-radius: 50%; line-height: 1; }
+  .chan span { min-width: 3.2rem; text-align: center; }
   .toast { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%);
            background: #2d6cdf; color: #fff; padding: .6rem 1rem; border-radius: 8px;
            opacity: 0; transition: opacity .3s; pointer-events: none; }
@@ -88,6 +93,12 @@ function render() {
     <div class="tile">
       <img src="/stream/${c.id}?t=${Date.now()}" alt="${c.name}">
       <span class="label"><span class="dot"></span>${c.name}</span>
+      ${c.hasChannel ? `
+      <div class="chan">
+        <button onclick="changeChannel(${c.id}, -1)">&minus;</button>
+        <span id="ch-${c.id}">ch ${c.channel}</span>
+        <button onclick="changeChannel(${c.id}, 1)">&plus;</button>
+      </div>` : ''}
     </div>`).join('');
   statusEl.textContent =
     `${CAMERAS.length} cams · layout ${cells} · page ${page + 1}/${pages()}`;
@@ -105,6 +116,21 @@ function toast(msg) {
   t.textContent = msg; t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 3000);
 }
+async function changeChannel(id, delta) {
+  const el = document.getElementById('ch-' + id);
+  const cur = CAMERAS.find(c => c.id === id);
+  const target = Math.max(1, (cur.channel || 1) + delta);
+  try {
+    const r = await fetch(`/api/channel/${id}`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({channel: target})
+    });
+    const j = await r.json();
+    cur.channel = j.channel;
+    if (el) el.textContent = 'ch ' + j.channel;
+  } catch (e) { toast('Channel switch failed'); }
+}
+
 document.getElementById('export').onclick = async () => {
   toast('Exporting…');
   try {
@@ -125,6 +151,8 @@ def create_app(cameras: list[ResolvedCamera], export_root: str = "exports"):
     """Build the Flask app plus the list of live streams it drives."""
     ok_cams = [c for c in cameras if c.ok]
     streams = [CameraStream(c.name or c.ip, c.working_url).start() for c in ok_cams]
+    base_urls = [c.working_url for c in ok_cams]
+    channels = [channel_of(u) or 1 for u in base_urls]
 
     app = Flask(__name__)
 
@@ -143,7 +171,9 @@ def create_app(cameras: list[ResolvedCamera], export_root: str = "exports"):
 
     @app.route("/")
     def index():
-        cams = [{"id": i, "name": c.name or c.ip}
+        cams = [{"id": i, "name": c.name or c.ip,
+                 "hasChannel": supports_channel(base_urls[i]),
+                 "channel": channels[i]}
                 for i, c in enumerate(ok_cams)]
         default_cells = 1 if len(cams) <= 1 else 4
         return render_template_string(INDEX_HTML, cameras=cams,
@@ -160,6 +190,20 @@ def create_app(cameras: list[ResolvedCamera], export_root: str = "exports"):
     def api_cameras():
         return jsonify([{"id": i, "name": c.name or c.ip, "vendor": c.vendor,
                          "model": c.model} for i, c in enumerate(ok_cams)])
+
+    @app.route("/api/channel/<int:idx>", methods=["POST"])
+    def api_channel(idx: int):
+        if not 0 <= idx < len(streams):
+            return jsonify({"error": "no such camera"}), 404
+        base = base_urls[idx]
+        if not supports_channel(base):
+            return jsonify({"channel": channels[idx], "supported": False})
+        data = request.get_json(silent=True) or {}
+        ch = max(1, int(data.get("channel", channels[idx])))
+        channels[idx] = ch
+        streams[idx].switch(rewrite_channel(base, ch))
+        log.info("[%s] switched to channel %d", ok_cams[idx].label(), ch)
+        return jsonify({"channel": ch, "supported": True})
 
     @app.route("/api/export", methods=["POST"])
     def api_export():

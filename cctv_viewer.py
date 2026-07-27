@@ -81,7 +81,9 @@ def cmd_export(args: argparse.Namespace) -> int:
         log.error("No cameras resolved — nothing to export.")
         return 1
     export_cameras(resolved, out_root=args.out, frames=args.frames,
-                   timeout=args.timeout, workers=args.workers)
+                   timeout=args.timeout, workers=args.workers,
+                   all_channels=args.all_channels,
+                   max_channels=args.max_channels)
     return 0
 
 
@@ -138,6 +140,10 @@ def build_parser() -> argparse.ArgumentParser:
     _add_resolve_opts(pe)
     pe.add_argument("--out", default="exports", help="Output root folder.")
     pe.add_argument("--frames", type=int, default=1, help="Frames per camera.")
+    pe.add_argument("--all-channels", action="store_true",
+                    help="Export one frame from every channel of each NVR/DVR.")
+    pe.add_argument("--max-channels", type=int, default=64,
+                    help="Highest channel number to probe with --all-channels.")
     pe.set_defaults(func=cmd_export)
 
     return parser

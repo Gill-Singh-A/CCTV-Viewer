@@ -11,7 +11,12 @@ and it will:
    actually pulling a live frame.
 3. **View** the live feeds in an OpenCV grid (single / 4 / 9 / 16 view) — or a
    Flask web dashboard in the browser.
-4. **Export** still frames from every camera in bulk.
+4. **Export** still frames from every camera in bulk — including every channel
+   of an NVR/DVR.
+
+Cameras on an **NVR/DVR** expose multiple channels behind one IP. You don't have
+to know how many: the channel is **switchable live in both viewers**, and
+`export --all-channels` walks every channel automatically.
 
 > ⚠️ **Authorized use only.** Use this tool exclusively on cameras you own or
 > have explicit written permission to access. You are responsible for complying
@@ -85,7 +90,9 @@ Lobby,192.168.1.65,admin,password,8000,554,1
 ```
 
 Blank lines and `#` comments are ignored. Missing ports default to
-80/8000 (ONVIF) and 554 (RTSP).
+80/8000 (ONVIF) and 554 (RTSP). `channel` is only a *starting* channel for
+NVRs/DVRs (default 1) — you can change it live in the viewer, so it's usually
+fine to leave blank.
 
 ### 3. Resolve
 
@@ -110,6 +117,7 @@ Keyboard controls (focus the video window):
 |-----|--------|
 | `1` `4` `9` `6` | single / 2×2 / 3×3 / 4×4 layout |
 | `n` `p` | next / previous page of cameras |
+| `.` `,` (or `]` `[`) | next / previous **channel** (all channel-capable cameras) |
 | `s` | save a snapshot of the current canvas |
 | `e` | export one frame from every camera now |
 | `q` / `Esc` | quit |
@@ -123,9 +131,10 @@ python cctv_viewer.py view -i cameras.csv --web --port 5000
 ```
 
 Then open <http://127.0.0.1:5000>. Each camera is served as an MJPEG stream in a
-responsive grid with Single/4/9/16 layout buttons, paging, and an **Export
-frames** button. Use `--host 0.0.0.0` to expose it on your network (only on
-trusted networks — the dashboard is unauthenticated).
+responsive grid with Single/4/9/16 layout buttons, paging, per-tile **channel
+&minus;/&plus;** controls (for NVR/DVR cameras) and an **Export frames** button.
+Use `--host 0.0.0.0` to expose it on your network (only on trusted networks —
+the dashboard is unauthenticated).
 
 ### 5. Bulk export
 
@@ -133,7 +142,15 @@ trusted networks — the dashboard is unauthenticated).
 python cctv_viewer.py export -i cameras.csv --frames 1 --out exports/
 ```
 
-Writes `exports/<timestamp>/<camera>.jpg` for every resolvable camera.
+Writes `exports/<timestamp>/<camera>.jpg` for every resolvable camera. To grab
+**every channel** of each NVR/DVR:
+
+```bash
+python cctv_viewer.py export -i cameras.csv --all-channels --max-channels 32
+```
+
+This probes channels `1..max` (stopping after a couple of empty ones once it has
+found some) and writes `exports/<timestamp>/<camera>-ch<N>.jpg`.
 
 ## Common options (`resolve` / `view` / `export`)
 

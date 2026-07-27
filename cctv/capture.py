@@ -67,6 +67,30 @@ def probe_frame(url: str, timeout: float = 8.0) -> bool:
     return result["ok"]
 
 
+def grab_frame(url: str, timeout: float = 8.0) -> Optional["np.ndarray"]:
+    """Open ``url``, return a single decoded frame (or None), then release."""
+    result = {"frame": None}
+
+    def worker():
+        cap = None
+        try:
+            cap = _open(url)
+            if cap.isOpened():
+                ok, frame = cap.read()
+                if ok and frame is not None and frame.size > 0:
+                    result["frame"] = frame
+        except Exception as exc:  # pragma: no cover
+            log.debug("grab error %s: %s", url, exc)
+        finally:
+            if cap is not None:
+                cap.release()
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    t.join(timeout)
+    return result["frame"]
+
+
 class CameraStream:
     """Background reader that always exposes the latest decoded frame."""
 
@@ -77,9 +101,19 @@ class CameraStream:
         self._frame: Optional[np.ndarray] = None
         self._lock = threading.Lock()
         self._stop = threading.Event()
+        self._switch = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.online = False
         self.last_frame_ts = 0.0
+
+    def switch(self, url: str) -> None:
+        """Point the stream at a new URL and reconnect immediately (live)."""
+        if url == self.url:
+            return
+        self.url = url
+        with self._lock:
+            self._frame = None
+        self._switch.set()
 
     def start(self) -> "CameraStream":
         if self._thread is None:
@@ -89,6 +123,7 @@ class CameraStream:
 
     def _run(self):
         while not self._stop.is_set():
+            self._switch.clear()
             cap = _open(self.url)
             if not cap.isOpened():
                 cap.release()
@@ -97,7 +132,11 @@ class CameraStream:
                     break
                 continue
             log.debug("connected: %s", self.name)
+            switched = False
             while not self._stop.is_set():
+                if self._switch.is_set():
+                    switched = True
+                    break
                 ok, frame = cap.read()
                 if not ok or frame is None:
                     break
@@ -107,6 +146,8 @@ class CameraStream:
                 self.last_frame_ts = time.time()
             cap.release()
             self.online = False
+            if switched:
+                continue  # reconnect to the new URL without the backoff delay
             if self._stop.wait(self.reconnect_delay):
                 break
 

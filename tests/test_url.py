@@ -5,7 +5,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from cctv.util import substitute, build_url, normalize_protocol, normalize_key
+from cctv.util import (substitute, build_url, normalize_protocol, normalize_key,
+                       channel_of, rewrite_channel, supports_channel)
 from cctv.resolver import inject_credentials
 
 
@@ -58,6 +59,40 @@ def test_inject_credentials():
     # already has userinfo -> unchanged
     assert inject_credentials("rtsp://a:b@10.0.0.5/live", "u", "p") == \
         "rtsp://a:b@10.0.0.5/live"
+
+
+def test_channel_query_style():
+    u = "rtsp://u:p@10.0.0.5:554/cam/realmonitor?channel=1&subtype=0"
+    assert channel_of(u) == 1
+    assert supports_channel(u)
+    assert rewrite_channel(u, 4) == \
+        "rtsp://u:p@10.0.0.5:554/cam/realmonitor?channel=4&subtype=0"
+
+
+def test_channel_hikvision_style_preserves_substream():
+    u = "rtsp://u:p@10.0.0.5:554/Streaming/Channels/102"  # ch1, sub-stream 2
+    assert channel_of(u) == 1
+    assert rewrite_channel(u, 3) == \
+        "rtsp://u:p@10.0.0.5:554/Streaming/Channels/302"  # ch3, sub-stream 2
+
+
+def test_channel_isapi_style():
+    u = "rtsp://u:p@10.0.0.5:554/ISAPI/Streaming/Channels/201"
+    assert channel_of(u) == 2
+    assert rewrite_channel(u, 5).endswith("/Channels/501")
+
+
+def test_channel_path_style():
+    u = "rtsp://u:p@10.0.0.5:554/live/ch1"
+    assert channel_of(u) == 1
+    assert rewrite_channel(u, 7) == "rtsp://u:p@10.0.0.5:554/live/ch7"
+
+
+def test_no_channel_is_unchanged():
+    u = "rtsp://u:p@10.0.0.5:554/onvif1"
+    assert channel_of(u) is None
+    assert not supports_channel(u)
+    assert rewrite_channel(u, 9) == u
 
 
 if __name__ == "__main__":
