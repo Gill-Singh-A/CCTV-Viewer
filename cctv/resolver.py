@@ -12,6 +12,7 @@ Anything that never yields a frame is marked ``UNRESOLVED`` (or ``UNREACHABLE``)
 from __future__ import annotations
 
 import csv
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Iterable, Optional
@@ -42,31 +43,76 @@ def _int_or_none(value: str) -> Optional[int]:
         return None
 
 
+_IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+_HEADER_TOKENS = {"ip", "username", "password", "name", "http_port",
+                  "rtsp_port", "channel", "user", "pass"}
+# Positional column order for headerless CSVs (matches the documented header).
+_POSITIONAL = ["name", "ip", "username", "password", "http_port",
+               "rtsp_port", "channel"]
+
+
+def _looks_like_header(fields: list[str]) -> bool:
+    low = {f.strip().lower() for f in fields}
+    return "ip" in low or len(low & _HEADER_TOKENS) >= 2
+
+
+def _positional_row(fields: list[str]) -> dict:
+    """Map a headerless row to the documented columns.
+
+    Supports both ``name,ip,...`` (name first) and ``ip,...`` (no name) by
+    detecting which field is the IPv4 address.
+    """
+    f = [x.strip() for x in fields]
+    cols = _POSITIONAL
+    if f and _IPV4_RE.match(f[0]):        # ip-first, no name column
+        cols = _POSITIONAL[1:]
+    return {col: (f[i] if i < len(f) else "") for i, col in enumerate(cols)}
+
+
+def _make_camera(row: dict) -> Optional[CameraInput]:
+    row = {(k or "").strip().lower(): (v or "").strip()
+           for k, v in row.items() if k}
+    ip = row.get("ip", "")
+    if not ip:
+        return None
+    return CameraInput(
+        name=row.get("name", "") or ip,
+        ip=ip,
+        username=row.get("username", ""),
+        password=row.get("password", ""),
+        http_port=_int_or_none(row.get("http_port", "")),
+        rtsp_port=_int_or_none(row.get("rtsp_port", "")),
+        channel=_int_or_none(row.get("channel", "")) or 1,
+    )
+
+
 def load_camera_list(path: str) -> list[CameraInput]:
     """Read the user's credentials CSV into ``CameraInput`` objects.
 
-    Ignores blank lines and ``#`` comments. Requires ip/username/password;
-    name/http_port/rtsp_port/channel are optional.
+    Accepts either a headered CSV (columns in any order) or a headerless one
+    (columns read positionally as name,ip,username,password,http_port,
+    rtsp_port,channel — or ip-first when the first field is an IP address).
+    Ignores blank lines and ``#`` comments; requires an ip per row.
     """
     cams: list[CameraInput] = []
     with open(path, newline="", encoding="utf-8") as f:
-        rows = [ln for ln in f if ln.strip() and not ln.lstrip().startswith("#")]
-    reader = csv.DictReader(rows)
-    for row in reader:
-        row = {(k or "").strip().lower(): (v or "").strip()
-               for k, v in row.items() if k}
-        ip = row.get("ip", "")
-        if not ip:
-            continue
-        cams.append(CameraInput(
-            name=row.get("name", "") or ip,
-            ip=ip,
-            username=row.get("username", ""),
-            password=row.get("password", ""),
-            http_port=_int_or_none(row.get("http_port", "")),
-            rtsp_port=_int_or_none(row.get("rtsp_port", "")),
-            channel=_int_or_none(row.get("channel", "")) or 1,
-        ))
+        lines = [ln for ln in f if ln.strip() and not ln.lstrip().startswith("#")]
+    if not lines:
+        return cams
+
+    first = next(csv.reader([lines[0]]))
+    if _looks_like_header(first):
+        for row in csv.DictReader(lines):
+            cam = _make_camera(row)
+            if cam:
+                cams.append(cam)
+    else:
+        log.warning("Input '%s' has no header row — reading columns positionally "
+                    "(name,ip,username,password,http_port,rtsp_port,channel).", path)
+        for fields in csv.reader(lines):
+            cam = _make_camera(_positional_row(fields))
+            if cam:
+                cams.append(cam)
     return cams
 
 
@@ -212,6 +258,10 @@ def resolve_cameras(input_csv: str, db: CameraDB, cache_path: str = "resolved.cs
                  "Pass --no-cache to re-resolve.", cache_path, len(cached))
         return cached
     cams = load_camera_list(input_csv)
+    if not cams:
+        log.error("No cameras loaded from %s — check the file has rows with an "
+                  "IP address (header optional).", input_csv)
+        return []
     log.info("Resolving %d camera(s) ...", len(cams))
     resolver = Resolver(db, probe_timeout=probe_timeout, try_defaults=try_defaults)
     resolved = resolver.resolve_all(cams, workers=workers)
