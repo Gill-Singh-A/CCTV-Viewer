@@ -45,6 +45,7 @@ def _resolve(args):
         use_cache=not args.no_cache, try_defaults=args.try_defaults,
         probe_timeout=args.timeout, workers=args.workers,
         retry_unresolved=args.retry_unresolved, retry_timeout=args.retry_timeout,
+        reach_timeout=args.reach_timeout,
     )
 
 
@@ -56,7 +57,10 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     for r in resolved:
         print(f"{r.name[:21]:22} {r.ip[:15]:16} {(r.vendor or '?')[:11]:12} "
               f"{r.status:11} {r.method}")
-    print(f"\n{len(ok)}/{len(resolved)} cameras resolved. "
+    unreachable = sum(1 for r in resolved if r.status == "UNREACHABLE")
+    unresolved = sum(1 for r in resolved if r.status == "UNRESOLVED")
+    print(f"\n{len(ok)}/{len(resolved)} cameras resolved "
+          f"({unreachable} unreachable, {unresolved} unresolved). "
           f"Full details (with URLs) cached in {args.cache}")
     return 0 if ok else 1
 
@@ -109,6 +113,9 @@ def _add_resolve_opts(p: argparse.ArgumentParser) -> None:
                         "serially with a longer timeout (recovers flaky/busy devices).")
     p.add_argument("--retry-timeout", type=float, default=12.0,
                    help="Per-URL probe timeout for the --retry-unresolved pass.")
+    p.add_argument("--reach-timeout", type=float, default=2.0,
+                   help="Fast TCP reachability pre-check timeout; offline hosts "
+                        "are marked UNREACHABLE and skipped. 0 disables the check.")
 
 
 def build_parser() -> argparse.ArgumentParser:

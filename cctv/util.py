@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import socket
 from urllib.parse import quote
 
 _LOG_CONFIGURED = False
@@ -40,6 +41,25 @@ _DEFAULT_TOKENS = {
     "HEIGHT": "720",
     "STREAM": "0",
 }
+
+
+def tcp_open(ip: str, port: int, timeout: float = 2.0) -> bool:
+    """True if a TCP connection to ip:port can be established quickly."""
+    if not port:
+        return False
+    try:
+        with socket.create_connection((ip, int(port)), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def reachable(ip: str, ports, timeout: float = 2.0) -> bool:
+    """True if any of ``ports`` accepts a TCP connection (host is alive)."""
+    for p in ports:
+        if tcp_open(ip, p, timeout):
+            return True
+    return False
 
 
 def normalize_protocol(proto: str) -> str:

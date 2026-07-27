@@ -95,6 +95,24 @@ def test_no_channel_is_unchanged():
     assert rewrite_channel(u, 9) == u
 
 
+def test_reachability_check():
+    import socket
+    from cctv.util import tcp_open, reachable
+    # bind an ephemeral listening port -> reachable; a closed port -> not
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+    try:
+        assert tcp_open("127.0.0.1", port, timeout=1.0) is True
+        assert reachable("127.0.0.1", [port, 1], timeout=1.0) is True
+    finally:
+        srv.close()
+    # now-closed port should be refused quickly
+    assert tcp_open("127.0.0.1", port, timeout=1.0) is False
+    assert reachable("127.0.0.1", [0, None], timeout=0.5) is False
+
+
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-v"]))

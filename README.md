@@ -30,6 +30,7 @@ frame:
 
 | Step | Source | Yields |
 |------|--------|--------|
+| 0 | fast TCP reachability pre-check | skip offline hosts (`UNREACHABLE`) |
 | 1 | ONVIF `GetDeviceInformation` | manufacturer + model |
 | 2 | ONVIF `GetStreamUri` | a ready-to-use RTSP URL |
 | 3 | HTTP `Server` / `WWW-Authenticate` realm / `<title>` | vendor guess |
@@ -38,7 +39,13 @@ frame:
 | 6 | generic common RTSP/HTTP paths | last-resort candidates |
 | 7 | *(optional)* scraped vendor **default credentials** | retry of the above |
 
-Anything that never produces a frame is reported as `UNRESOLVED`.
+Each camera reports one of three states:
+
+- **`OK`** — a live stream URL was found (cached in `resolved.csv`).
+- **`UNREACHABLE`** — the host didn't accept a TCP connection on 554/80, so it's
+  offline or on a different network. Skipped instantly (no slow URL probing).
+- **`UNRESOLVED`** — the host is up but no candidate URL produced a frame
+  (usually a wrong password or an unusual URL scheme).
 
 ## Install
 
@@ -115,6 +122,17 @@ stay unresolved:
 python cctv_viewer.py resolve -i cameras.csv --retry-unresolved
 ```
 
+Offline hosts no longer slow this down: a fast TCP pre-check marks unreachable
+cameras `UNREACHABLE` in ~2s instead of grinding through every candidate URL.
+
+**To resolve the maximum number of cameras** in one go, combine the retry pass
+with default-credential fallback:
+
+```bash
+python cctv_viewer.py resolve -i cameras.csv \
+    --retry-unresolved --try-defaults
+```
+
 ### 4. View
 
 ```bash
@@ -175,6 +193,7 @@ found some) and writes `exports/<timestamp>/<camera>-ch<N>.jpg`.
 | `--workers` | cameras resolved/exported in parallel (default 6) |
 | `--retry-unresolved` | after the parallel pass, retry `UNRESOLVED` cameras serially with a longer timeout (recovers flaky/busy devices) |
 | `--retry-timeout` | per-URL probe timeout for the retry pass (default 12) |
+| `--reach-timeout` | TCP reachability pre-check timeout (default 2); `0` disables it |
 | `-v, --verbose` | debug logging |
 
 ## Project layout

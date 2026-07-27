@@ -24,7 +24,7 @@ from .capture import probe_frame
 from .db import CameraDB
 from .fingerprint import fingerprint
 from .models import CameraInput, ResolvedCamera, TemplateRow
-from .util import build_url, get_logger
+from .util import build_url, get_logger, reachable
 
 log = get_logger("cctv.resolver")
 
@@ -147,11 +147,14 @@ def _url_from_template(cam: CameraInput, tr: TemplateRow,
 # --------------------------------------------------------------------------
 class Resolver:
     def __init__(self, db: CameraDB, probe_timeout: float = 8.0,
-                 max_candidates: int = 25, try_defaults: bool = False):
+                 max_candidates: int = 25, try_defaults: bool = False,
+                 reach_timeout: float = 2.0):
         self.db = db
         self.probe_timeout = probe_timeout
         self.max_candidates = max_candidates
         self.try_defaults = try_defaults
+        # Fast TCP pre-check timeout; <= 0 disables the reachability check.
+        self.reach_timeout = reach_timeout
         # Many cameras/NVRs cap simultaneous RTSP sessions, so probing the same
         # IP from two workers at once makes one of them fail. Serialize per IP.
         self._ip_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
@@ -194,6 +197,16 @@ class Resolver:
             return self._resolve_one_locked(cam)
 
     def _resolve_one_locked(self, cam: CameraInput) -> ResolvedCamera:
+        # Fast reachability pre-check: skip the whole candidate chain for hosts
+        # that aren't even accepting connections (offline / wrong subnet).
+        if self.reach_timeout > 0:
+            ports = {cam.rtsp_port or 554, cam.http_port or 80}
+            if not reachable(cam.ip, ports, self.reach_timeout):
+                log.warning("[%s] UNREACHABLE (no TCP on %s)",
+                            cam.label(), ",".join(str(p) for p in sorted(ports)))
+                return ResolvedCamera(name=cam.name, ip=cam.ip,
+                                      status="UNREACHABLE")
+
         fp = fingerprint(cam)
         rc = ResolvedCamera(name=cam.name, ip=cam.ip,
                             vendor=fp.vendor or "", model=fp.model or "")
@@ -266,8 +279,8 @@ def read_resolved(path: str) -> list[ResolvedCamera]:
 def resolve_cameras(input_csv: str, db: CameraDB, cache_path: str = "resolved.csv",
                     use_cache: bool = True, try_defaults: bool = False,
                     probe_timeout: float = 8.0, workers: int = 6,
-                    retry_unresolved: bool = False,
-                    retry_timeout: float = 12.0) -> list[ResolvedCamera]:
+                    retry_unresolved: bool = False, retry_timeout: float = 12.0,
+                    reach_timeout: float = 2.0) -> list[ResolvedCamera]:
     """High-level helper used by the CLI's resolve/view/export commands."""
     if use_cache and Path(cache_path).exists():
         cached = read_resolved(cache_path)
@@ -280,16 +293,20 @@ def resolve_cameras(input_csv: str, db: CameraDB, cache_path: str = "resolved.cs
                   "IP address (header optional).", input_csv)
         return []
     log.info("Resolving %d camera(s) ...", len(cams))
-    resolver = Resolver(db, probe_timeout=probe_timeout, try_defaults=try_defaults)
+    resolver = Resolver(db, probe_timeout=probe_timeout, try_defaults=try_defaults,
+                        reach_timeout=reach_timeout)
     resolved = resolver.resolve_all(cams, workers=workers)
 
     if retry_unresolved:
-        pending = [i for i, r in enumerate(resolved) if not r.ok]
+        # Only retry UNRESOLVED (found the host but no working URL); UNREACHABLE
+        # hosts are definitively down, so retrying them just wastes time.
+        pending = [i for i, r in enumerate(resolved) if r.status == "UNRESOLVED"]
         if pending:
             log.info("Retrying %d unresolved camera(s) serially (timeout %.0fs) ...",
                      len(pending), retry_timeout)
             retry_resolver = Resolver(db, probe_timeout=retry_timeout,
-                                      try_defaults=try_defaults)
+                                      try_defaults=try_defaults,
+                                      reach_timeout=reach_timeout)
             retried = retry_resolver.resolve_all([cams[i] for i in pending], workers=1)
             recovered = 0
             for slot, i in enumerate(pending):
