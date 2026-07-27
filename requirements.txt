@@ -11,6 +11,6 @@ lxml>=5.0
 Flask>=3.0
 
 # Camera identification (ONVIF)
-onvif-zeep>=0.2.12
+onvif-zeep>=0.2.12          # ONVIF fingerprinting (vendor + model)
 # Optional: network auto-discovery of ONVIF cameras
 WSDiscovery>=2.0
