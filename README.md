@@ -44,6 +44,9 @@ Each camera reports one of three states:
 - **`OK`** — a live stream URL was found (cached in `resolved.csv`).
 - **`UNREACHABLE`** — the host didn't accept a TCP connection on 554/80, so it's
   offline or on a different network. Skipped instantly (no slow URL probing).
+  `--retry-unresolved` re-checks these serially, so a host that only *looked*
+  unreachable because of transient load during the parallel pass still gets a
+  fair second chance.
 - **`UNRESOLVED`** — the host is up but no candidate URL produced a frame
   (usually a wrong password or an unusual URL scheme).
 

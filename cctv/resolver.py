@@ -242,8 +242,19 @@ class Resolver:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futs = {pool.submit(self.resolve_one, c): i for i, c in enumerate(cams)}
             for fut in as_completed(futs):
-                results[futs[fut]] = fut.result()
-        return [r for r in results if r is not None]
+                i = futs[fut]
+                try:
+                    results[i] = fut.result()
+                except Exception as exc:  # never let one camera drop a row
+                    log.warning("[%s] resolve crashed: %s", cams[i].label(), exc)
+                    results[i] = ResolvedCamera(name=cams[i].name, ip=cams[i].ip,
+                                                status="UNRESOLVED")
+        # Guarantee one result per input camera (no silent drops).
+        for i, r in enumerate(results):
+            if r is None:
+                results[i] = ResolvedCamera(name=cams[i].name, ip=cams[i].ip,
+                                            status="UNRESOLVED")
+        return results  # type: ignore[return-value]
 
 
 # --------------------------------------------------------------------------
@@ -298,12 +309,14 @@ def resolve_cameras(input_csv: str, db: CameraDB, cache_path: str = "resolved.cs
     resolved = resolver.resolve_all(cams, workers=workers)
 
     if retry_unresolved:
-        # Only retry UNRESOLVED (found the host but no working URL); UNREACHABLE
-        # hosts are definitively down, so retrying them just wastes time.
-        pending = [i for i, r in enumerate(resolved) if r.status == "UNRESOLVED"]
+        # Retry both UNRESOLVED and UNREACHABLE. The serial pass runs unloaded,
+        # so a host that got a false UNREACHABLE during the parallel pass (a
+        # transient connect timeout under load) gets a fair second chance;
+        # genuinely-dead hosts just re-confirm UNREACHABLE cheaply.
+        pending = [i for i, r in enumerate(resolved) if not r.ok]
         if pending:
-            log.info("Retrying %d unresolved camera(s) serially (timeout %.0fs) ...",
-                     len(pending), retry_timeout)
+            log.info("Retrying %d unresolved/unreachable camera(s) serially "
+                     "(timeout %.0fs) ...", len(pending), retry_timeout)
             retry_resolver = Resolver(db, probe_timeout=retry_timeout,
                                       try_defaults=try_defaults,
                                       reach_timeout=reach_timeout)
