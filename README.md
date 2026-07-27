@@ -46,7 +46,7 @@ frame:
 | 4 | RTSP `OPTIONS` `Server` header | vendor guess |
 | 5 | vendor+model → scraped DB templates | candidate URLs |
 | 6 | generic common RTSP/HTTP paths | last-resort candidates |
-| 7 | *(optional)* scraped vendor **default credentials** | retry of the above |
+| 7 | *(optional)* vendor **default credentials** (curated + common) | retry of the above |
 
 Each camera reports one of three states:
 
@@ -99,6 +99,15 @@ Scrapes every manufacturer from ispyconnect into:
 
 - `data/cameras.csv` — `vendor,model,type,protocol,port,url`
 - `data/default_credentials.csv` — `vendor,default_username,default_password`
+  (one row per credential pair)
+
+ispyconnect's connection form only ever pre-fills a generic `admin`/`admin`, so
+that scraped value is **merged with a curated table of real, publicly
+documented per-vendor factory defaults** (`CURATED_DEFAULT_CREDENTIALS` in
+`cctv/scraper.py`) — curated pairs first, `admin`/`admin` kept as a fallback.
+Pass `--no-curated-creds` to emit only the raw scraped placeholders. These are
+documented defaults, not guarantees: many modern cameras force a password change
+on first boot.
 
 Raw HTML is cached under `.cache/`, so re-runs are fast (use `--refresh` to
 re-download). Limit scope with `--vendors axis,hikvision,dahua` or `--limit N`.
@@ -225,7 +234,7 @@ found some) and writes `exports/<timestamp>/<camera>-ch<N>.jpg`.
 | `--cache` | resolved-URL cache path (default `resolved.csv`) |
 | `--no-cache` | *(view/export)* ignore the cache and re-resolve |
 | `--use-cache` | *(resolve)* reprint the cached result instead of re-resolving |
-| `--try-defaults` | retry with scraped vendor default credentials |
+| `--try-defaults` | on failure, retry with the vendor's curated default credentials, then common generic pairs |
 | `--timeout` | per-URL probe timeout, seconds (default 8) |
 | `--workers` | cameras resolved/exported in parallel (default 6) |
 | `--retry-unresolved` | after the parallel pass, retry `UNRESOLVED`/`UNREACHABLE` cameras serially with a longer timeout (recovers flaky/busy devices and false-negative reachability checks) |

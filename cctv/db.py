@@ -33,12 +33,27 @@ GENERIC_PATHS: list[tuple[str, str]] = [
     ("http", "/videostream.cgi?user=[USERNAME]&pwd=[PASSWORD]"),
 ]
 
+# Generic credential pairs tried (with --try-defaults) after any vendor-specific
+# default, for cameras whose vendor isn't in the curated list. Ordered by
+# real-world prevalence. Empty string = blank password.
+COMMON_DEFAULTS: list[tuple[str, str]] = [
+    ("admin", "admin"),
+    ("admin", "12345"),
+    ("admin", "123456"),
+    ("admin", ""),
+    ("admin", "password"),
+    ("root", "pass"),
+    ("root", "root"),
+    ("admin", "888888"),
+]
+
 
 class CameraDB:
     def __init__(self):
         self._by_vendor: dict[str, list[TemplateRow]] = defaultdict(list)
         self._by_vendor_model: dict[tuple[str, str], list[TemplateRow]] = defaultdict(list)
-        self._defaults: dict[str, tuple[str, str]] = {}
+        # normalized vendor key -> ordered list of (username, password) pairs
+        self._defaults: dict[str, list[tuple[str, str]]] = defaultdict(list)
         self.loaded = False
 
     # -- loading ----------------------------------------------------------
@@ -69,10 +84,11 @@ class CameraDB:
         if creds_path.exists():
             with open(creds_path, newline="", encoding="utf-8") as f:
                 for row in csv.DictReader(f):
-                    db._defaults[normalize_key(row["vendor"])] = (
-                        row.get("default_username", ""),
-                        row.get("default_password", ""),
-                    )
+                    key = normalize_key(row["vendor"])
+                    pair = (row.get("default_username", ""),
+                            row.get("default_password", ""))
+                    if pair not in db._defaults[key]:
+                        db._defaults[key].append(pair)
         db.loaded = True
         log.info("Loaded DB: %d vendors, %d template rows, %d default-cred entries.",
                  len(db._by_vendor),
@@ -113,10 +129,14 @@ class CameraDB:
         return result
 
     def default_creds_for(self, vendor: Optional[str],
-                          model: Optional[str] = None) -> Optional[tuple[str, str]]:
-        if not vendor:
-            return None
-        return self._defaults.get(normalize_key(vendor))
+                          model: Optional[str] = None) -> list[tuple[str, str]]:
+        """Ordered default credential pairs to try for a vendor.
+
+        A known vendor returns its curated + scraped pairs (curated first). An
+        unknown/unmatched vendor falls back to the common generic pairs.
+        """
+        pairs = list(self._defaults.get(normalize_key(vendor), [])) if vendor else []
+        return pairs if pairs else list(COMMON_DEFAULTS)
 
     @staticmethod
     def generic_templates() -> list[TemplateRow]:

@@ -26,7 +26,8 @@ def cmd_scrape(args: argparse.Namespace) -> int:
     vendors = [v.strip() for v in args.vendors.split(",")] if args.vendors else None
     n_rows, n_creds = scrape(out_cameras=args.out, out_creds=args.creds_out,
                              vendors=vendors, limit=args.limit,
-                             delay=args.delay, refresh=args.refresh)
+                             delay=args.delay, refresh=args.refresh,
+                             curated=args.curated)
     log.info("Wrote %s (%d rows) and %s (%d default-cred entries).",
              args.out, n_rows, args.creds_out, n_creds)
     return 0
@@ -162,7 +163,10 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--limit", type=int, help="Only scrape the first N brands.")
     ps.add_argument("--delay", type=float, default=0.5, help="Delay between requests.")
     ps.add_argument("--refresh", action="store_true", help="Ignore the HTML cache.")
-    ps.set_defaults(func=cmd_scrape)
+    ps.add_argument("--no-curated-creds", dest="curated", action="store_false",
+                    help="Emit only ispyconnect's scraped defaults (generic "
+                         "admin/admin); skip the curated per-vendor table.")
+    ps.set_defaults(func=cmd_scrape, curated=True)
 
     pr = sub.add_parser("resolve", help="Fingerprint cameras and find working URLs.")
     _add_resolve_opts(pr, read_cache_by_default=False)

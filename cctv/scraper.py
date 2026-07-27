@@ -6,8 +6,14 @@ Produces two CSVs:
 
 The brand pages are plain server-rendered HTML. Each connection row exposes its
 fields as ``data-*`` attributes on the ``<tr>`` and one ``<span class="model-anchor">``
-per compatible model. Default credentials, when present, are pre-filled into the
-``#txtCamUser`` / ``#txtCamPass`` form inputs.
+per compatible model.
+
+Note on default credentials: ispyconnect only pre-fills a generic ``admin``/
+``admin`` into its ``#txtCamUser`` / ``#txtCamPass`` form regardless of vendor —
+it is a "try these" placeholder, not a real factory default. So the scraped
+value is merged with the curated ``CURATED_DEFAULT_CREDENTIALS`` table (real,
+publicly documented per-vendor defaults) which takes priority; the scraped
+``admin``/``admin`` is kept only as a last-resort fallback.
 """
 
 from __future__ import annotations
@@ -23,7 +29,7 @@ from urllib.parse import urljoin
 import requests
 from bs4 import BeautifulSoup
 
-from .util import get_logger, normalize_protocol, slug_to_vendor
+from .util import get_logger, normalize_key, normalize_protocol, slug_to_vendor
 
 log = get_logger("cctv.scraper")
 
@@ -36,6 +42,101 @@ USER_AGENT = (
 
 CAMERAS_HEADER = ["vendor", "model", "type", "protocol", "port", "url"]
 CREDS_HEADER = ["vendor", "default_username", "default_password"]
+
+# ispyconnect's connection form only ever pre-fills a generic ``admin``/``admin``
+# — it is a "try these" placeholder, not a real per-vendor factory default. This
+# curated table fills that gap with the publicly documented factory defaults for
+# the major CCTV / IP-camera vendors. Each vendor maps to a priority-ordered list
+# of ``(username, password)`` pairs (many brands ship several well-known defaults
+# across firmware revisions and regions); an empty string means a blank password.
+#
+# These are documented defaults, not guarantees: verify against the specific
+# model/firmware, as newer devices increasingly force a password change on first
+# boot. Canonical vendor names here are matched to scraped/fingerprinted vendors
+# via ``normalize_key`` (case- and punctuation-insensitive).
+CURATED_DEFAULT_CREDENTIALS: dict[str, list[tuple[str, str]]] = {
+    "Hikvision":     [("admin", "12345"), ("admin", "admin")],
+    "Dahua":         [("admin", "admin"), ("admin", "123456"),
+                      ("888888", "888888"), ("666666", "666666")],
+    "Axis":          [("root", "pass"), ("root", "root"), ("admin", "admin")],
+    "Amcrest":       [("admin", "admin"), ("admin", "")],
+    "Reolink":       [("admin", ""), ("admin", "admin")],
+    "Foscam":        [("admin", ""), ("admin", "admin"), ("admin", "foscam")],
+    "Vivotek":       [("root", ""), ("root", "root")],
+    "Mobotix":       [("admin", "meinsm")],
+    "Bosch":         [("service", "service"), ("live", "live"), ("admin", "admin")],
+    "Samsung":       [("admin", "4321"), ("admin", "1111111"), ("root", "root"),
+                      ("admin", "admin")],
+    "Hanwha":        [("admin", "4321"), ("admin", "1111111"), ("admin", "admin")],
+    "Sony":          [("admin", "admin")],
+    "Panasonic":     [("admin", "12345"), ("admin", "admin")],
+    "Ubiquiti":      [("ubnt", "ubnt")],
+    "D-Link":        [("admin", ""), ("admin", "admin")],
+    "Tp-link":       [("admin", "admin")],
+    "Trendnet":      [("admin", "admin")],
+    "Acti":          [("admin", "123456"), ("Admin", "123456")],
+    "Geovision":     [("admin", "admin")],
+    "Lorex":         [("admin", "000000"), ("admin", "admin")],
+    "Swann":         [("admin", "12345"), ("admin", "")],
+    "Uniview":       [("admin", "123456"), ("admin", "admin")],
+    "Honeywell":     [("administrator", "1234"), ("admin", "1234")],
+    "Pelco":         [("admin", "admin")],
+    "Avigilon":      [("administrator", "")],
+    "Arecont Vision": [("admin", ""), ("admin", "admin")],
+    "Grandstream":   [("admin", "admin")],
+    "Digital Watchdog": [("admin", "admin"), ("admin", "")],
+    "Toshiba":       [("root", "ikwd"), ("admin", "admin")],
+    "Sanyo":         [("admin", "admin")],
+    "Cisco":         [("admin", "admin")],
+    "Instar":        [("admin", "instar"), ("admin", "")],
+    "Zavio":         [("admin", "admin")],
+    "Brickcom":      [("admin", "admin")],
+    "Interlogix":    [("admin", "1234")],
+    "Wisenet":       [("admin", "4321"), ("admin", "1111111")],
+    "Speco":         [("admin", "1234"), ("admin", "admin")],
+    "Lts":           [("admin", "12345"), ("admin", "admin")],
+    "Annke":         [("admin", ""), ("admin", "admin")],
+    "Y-cam":         [("admin", "")],
+    "Airlive":       [("admin", "airlive")],
+    "Planet":        [("admin", "admin")],
+    "Ipx-ddk":       [("root", "admin"), ("root", "Admin")],
+    "Basler":        [("admin", "admin")],
+}
+
+
+def enrich_credentials(scraped: dict, use_curated: bool = True) -> list[dict]:
+    """Merge curated per-vendor defaults with scraped ispyconnect defaults.
+
+    ``scraped`` maps a normalized vendor key to ``(display_name, [(user, pass),
+    ...])``. Curated pairs are emitted first (most-likely factory defaults), then
+    any scraped pair not already present, so the generic ``admin/admin`` becomes
+    a last-resort fallback rather than the only entry. Returns a list of
+    ``CREDS_HEADER`` row dicts, de-duplicated per vendor.
+    """
+    curated_by_key = {normalize_key(v): (v, pairs)
+                      for v, pairs in CURATED_DEFAULT_CREDENTIALS.items()}
+    keys = list(scraped.keys()) + [k for k in curated_by_key if k not in scraped]
+
+    rows: list[dict] = []
+    for key in keys:
+        display, scraped_pairs = scraped.get(key, (None, []))
+        cur_display, cur_pairs = curated_by_key.get(key, (None, []))
+        name = display or cur_display
+        if not name:
+            continue
+        ordered, seen = [], set()
+        for u, p in (cur_pairs if use_curated else []):
+            if (u, p) not in seen:
+                seen.add((u, p))
+                ordered.append((u, p))
+        for u, p in scraped_pairs:
+            if (u, p) not in seen:
+                seen.add((u, p))
+                ordered.append((u, p))
+        for u, p in ordered:
+            rows.append({"vendor": name,
+                         "default_username": u, "default_password": p})
+    return rows
 
 
 class Scraper:
@@ -156,7 +257,8 @@ class Scraper:
     def run(self, out_cameras: str, out_creds: str,
             vendors: Optional[Iterable[str]] = None,
             limit: Optional[int] = None,
-            refresh: bool = False) -> tuple[int, int]:
+            refresh: bool = False,
+            curated: bool = True) -> tuple[int, int]:
         list_html = self.fetch(LIST_URL, use_cache=not refresh)
         if not list_html:
             raise RuntimeError(f"Could not fetch brand index: {LIST_URL}")
@@ -170,13 +272,12 @@ class Scraper:
         log.info("Scraping %d brands ...", len(slugs))
 
         Path(out_cameras).parent.mkdir(parents=True, exist_ok=True)
-        n_rows = n_creds = 0
-        with open(out_cameras, "w", newline="", encoding="utf-8") as cam_f, \
-             open(out_creds, "w", newline="", encoding="utf-8") as cred_f:
+        n_rows = 0
+        # normalized vendor key -> (display_name, [(user, pass), ...])
+        scraped_creds: dict[str, tuple[str, list[tuple[str, str]]]] = {}
+        with open(out_cameras, "w", newline="", encoding="utf-8") as cam_f:
             cam_w = csv.DictWriter(cam_f, fieldnames=CAMERAS_HEADER)
             cam_w.writeheader()
-            cred_w = csv.DictWriter(cred_f, fieldnames=CREDS_HEADER)
-            cred_w.writeheader()
 
             for i, slug in enumerate(slugs, 1):
                 url = f"{BASE_URL}/camera/{slug}"
@@ -189,13 +290,25 @@ class Scraper:
                     cam_w.writerow(r)
                 n_rows += len(rows)
                 if creds:
-                    cred_w.writerow(creds)
-                    n_creds += 1
+                    key = normalize_key(creds["vendor"])
+                    _, pairs = scraped_creds.setdefault(key, (creds["vendor"], []))
+                    pair = (creds["default_username"], creds["default_password"])
+                    if pair not in pairs:
+                        pairs.append(pair)
                 if i % 25 == 0 or i == len(slugs):
                     log.info("[%d/%d] %s -> %d rows (total %d)",
                              i, len(slugs), slug, len(rows), n_rows)
 
-        log.info("Done. %d camera rows, %d default-cred entries.", n_rows, n_creds)
+        cred_rows = enrich_credentials(scraped_creds, use_curated=curated)
+        with open(out_creds, "w", newline="", encoding="utf-8") as cred_f:
+            cred_w = csv.DictWriter(cred_f, fieldnames=CREDS_HEADER)
+            cred_w.writeheader()
+            cred_w.writerows(cred_rows)
+        n_creds = len(cred_rows)
+        n_vendors = len({normalize_key(r["vendor"]) for r in cred_rows})
+
+        log.info("Done. %d camera rows, %d default-cred pairs across %d vendors "
+                 "(curated=%s).", n_rows, n_creds, n_vendors, curated)
         return n_rows, n_creds
 
 
@@ -205,8 +318,9 @@ def scrape(out_cameras: str = "data/cameras.csv",
            limit: Optional[int] = None,
            delay: float = 0.5,
            refresh: bool = False,
+           curated: bool = True,
            cache_dir: str = ".cache") -> tuple[int, int]:
     """Convenience wrapper used by the CLI."""
     scraper = Scraper(cache_dir=cache_dir, delay=delay)
     return scraper.run(out_cameras, out_creds, vendors=vendors,
-                       limit=limit, refresh=refresh)
+                       limit=limit, refresh=refresh, curated=curated)

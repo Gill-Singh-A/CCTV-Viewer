@@ -20,6 +20,7 @@ def _write_fixture(tmp_path):
     creds = tmp_path / "creds.csv"
     creds.write_text(
         "vendor,default_username,default_password\n"
+        "Hikvision,admin,12345\n"
         "Hikvision,admin,admin\n"
     )
     return str(cams), str(creds)
@@ -53,10 +54,14 @@ def test_fuzzy_vendor_match(tmp_path):
 
 
 def test_default_creds(tmp_path):
+    from cctv.db import COMMON_DEFAULTS
     cams, creds = _write_fixture(tmp_path)
     db = CameraDB.load(cams, creds)
-    assert db.default_creds_for("Hikvision") == ("admin", "admin")
-    assert db.default_creds_for("Unknown") is None
+    # known vendor: multiple pairs, curated/scraped order preserved
+    assert db.default_creds_for("Hikvision") == [("admin", "12345"), ("admin", "admin")]
+    # unknown vendor: common generic fallback
+    assert db.default_creds_for("Unknown") == list(COMMON_DEFAULTS)
+    assert db.default_creds_for(None) == list(COMMON_DEFAULTS)
 
 
 def test_generic_templates_present():

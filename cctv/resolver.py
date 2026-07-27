@@ -188,6 +188,8 @@ class Resolver:
         self.count_channels_flag = count_channels_flag
         self.count_max = count_max
         self.count_batch = count_batch
+        # Cap on how many default credential pairs --try-defaults probes.
+        self.max_default_sets = 8
         # Many cameras/NVRs cap simultaneous RTSP sessions, so probing the same
         # IP from two workers at once makes one of them fail. Serialize per IP.
         self._ip_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
@@ -254,11 +256,13 @@ class Resolver:
 
         # Attempt 1: supplied credentials.
         cred_sets = [(cam.username, cam.password, False)]
-        # Attempt 2 (optional): scraped default credentials for this vendor.
+        # Attempt 2 (optional): the vendor's default credential pairs (curated +
+        # scraped), then common generic pairs — each tried in turn, capped.
         if self.try_defaults:
-            defs = self.db.default_creds_for(fp.vendor, fp.model)
-            if defs and (defs[0], defs[1]) != (cam.username, cam.password):
-                cred_sets.append((defs[0], defs[1], True))
+            supplied = (cam.username, cam.password)
+            for user, pwd in self.db.default_creds_for(fp.vendor, fp.model)[:self.max_default_sets]:
+                if (user, pwd) != supplied:
+                    cred_sets.append((user, pwd, True))
 
         for username, password, is_default in cred_sets:
             for method, url in self._candidate_urls(cam, fp, username, password):
