@@ -104,6 +104,12 @@ Blank lines and `#` comments are ignored. Missing ports default to
 NVRs/DVRs (default 1) — you can change it live in the viewer, so it's usually
 fine to leave blank.
 
+**The header row is optional.** If the first line isn't a header, columns are
+read positionally in the order above (`name,ip,username,password,http_port,
+rtsp_port,channel`), or as `ip,username,password,…` when the first field is an
+IP address. With a header you can put columns in any order. Only `ip` is
+strictly required per row.
+
 ### 3. Resolve
 
 ```bash
@@ -116,10 +122,11 @@ credentials** and is git-ignored). `view` and `export` reuse this cache; pass
 scraped default credentials when the supplied ones fail.
 
 Resolving many cameras at once is fast but a busy device can occasionally miss
-its probe window. Add `--retry-unresolved` to run a second, serial pass over
-anything that came back `UNRESOLVED` (with a longer `--retry-timeout`), which
-recovers flaky/busy cameras — only genuinely offline or wrong-password devices
-stay unresolved:
+its probe window (or briefly look unreachable under load). Add
+`--retry-unresolved` to run a second, serial pass over anything still
+`UNRESOLVED`/`UNREACHABLE` (with a longer `--retry-timeout`), which recovers
+flaky/busy cameras — only genuinely offline or wrong-password devices stay
+unresolved:
 
 ```bash
 python cctv_viewer.py resolve -i cameras.csv --retry-unresolved
@@ -194,7 +201,7 @@ found some) and writes `exports/<timestamp>/<camera>-ch<N>.jpg`.
 | `--try-defaults` | retry with scraped vendor default credentials |
 | `--timeout` | per-URL probe timeout, seconds (default 8) |
 | `--workers` | cameras resolved/exported in parallel (default 6) |
-| `--retry-unresolved` | after the parallel pass, retry `UNRESOLVED` cameras serially with a longer timeout (recovers flaky/busy devices) |
+| `--retry-unresolved` | after the parallel pass, retry `UNRESOLVED`/`UNREACHABLE` cameras serially with a longer timeout (recovers flaky/busy devices and false-negative reachability checks) |
 | `--retry-timeout` | per-URL probe timeout for the retry pass (default 12) |
 | `--reach-timeout` | TCP reachability pre-check timeout (default 2); `0` disables it |
 | `-v, --verbose` | debug logging |
@@ -215,7 +222,7 @@ cctv/
   models.py, util.py  shared types and helpers
 data/                 scraped database (committed)
 examples/             sample input CSV
-tests/                unit tests (url + db logic)
+tests/                unit tests (url/channel, db, input parsing)
 ```
 
 ## Notes & limitations
