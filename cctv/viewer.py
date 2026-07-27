@@ -112,12 +112,19 @@ class GridViewer:
     def _has_channels(self) -> bool:
         return supports_channel(self._family().working_url)
 
+    def _family_max_ch(self) -> int:
+        """Highest channel to show for the current family (counted, or fallback)."""
+        fam = self._family()
+        if not supports_channel(fam.working_url):
+            return 1
+        return fam.channels if fam.channels > 0 else self.max_channels
+
     def _visible_channels(self) -> list[int]:
         if not self._has_channels():
             return [channel_of(self._family().working_url) or 1]
         start = self.channel_page * self.cells + 1
         return [ch for ch in range(start, start + self.cells)
-                if ch <= self.max_channels]
+                if ch <= self._family_max_ch()]
 
     def _cell_size(self) -> tuple[int, int]:
         rows, cols = _grid_dims(self.cells)
@@ -149,8 +156,11 @@ class GridViewer:
     def _page_channels(self, delta: int) -> None:
         if not self._has_channels():
             return
-        self.channel_page = max(0, self.channel_page + delta)
-        self._build_streams()
+        max_page = max(0, (self._family_max_ch() - 1) // self.cells)
+        new_page = min(max(0, self.channel_page + delta), max_page)
+        if new_page != self.channel_page:
+            self.channel_page = new_page
+            self._build_streams()
 
     def _set_layout(self, cells: int) -> None:
         if cells != self.cells:
@@ -182,7 +192,8 @@ class GridViewer:
         online = sum(1 for _, s in self.streams if s.online)
         vis = self._visible_channels()
         if self._has_channels() and vis:
-            chan = f"ch {vis[0]}-{vis[-1]}"
+            total = f"/{fam.channels}" if fam.channels > 0 else ""
+            chan = f"ch {vis[0]}-{vis[-1]}{total}"
         else:
             chan = "single"
         txt = (f"family {self.family_idx + 1}/{len(self.families)}: "

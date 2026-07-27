@@ -70,6 +70,7 @@ class ResolvedCamera:
     working_url: str = ""      # full url including credentials (sensitive!)
     status: str = "UNRESOLVED"  # OK | UNRESOLVED | UNREACHABLE
     method: str = ""            # how it was resolved (onvif / db / generic / defaults)
+    channels: int = 0           # live channels in this family (0 = uncounted)
 
     @property
     def ok(self) -> bool:

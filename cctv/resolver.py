@@ -24,12 +24,35 @@ from .capture import probe_frame
 from .db import CameraDB
 from .fingerprint import fingerprint
 from .models import CameraInput, ResolvedCamera, TemplateRow
-from .util import build_url, get_logger, reachable
+from .util import (build_url, get_logger, reachable, rewrite_channel,
+                   supports_channel)
 
 log = get_logger("cctv.resolver")
 
 RESOLVED_HEADER = ["name", "ip", "vendor", "model", "protocol",
-                   "status", "method", "working_url"]
+                   "status", "method", "channels", "working_url"]
+
+
+def count_channels(working_url: str, timeout: float = 6.0,
+                   max_channels: int = 64, miss_streak: int = 2) -> int:
+    """Count the live channels of a family by probing channel 1, 2, 3, …
+
+    Stops after ``miss_streak`` consecutive empty channels once at least one has
+    responded (NVR channels are normally contiguous from 1). Returns 1 for a URL
+    that has no channel component (a single-lens camera).
+    """
+    if not supports_channel(working_url):
+        return 1
+    found = misses = 0
+    for ch in range(1, max_channels + 1):
+        if probe_frame(rewrite_channel(working_url, ch), timeout=timeout):
+            found += 1
+            misses = 0
+        elif found:
+            misses += 1
+            if misses >= miss_streak:
+                break
+    return found or 1
 
 
 # --------------------------------------------------------------------------
@@ -148,13 +171,17 @@ def _url_from_template(cam: CameraInput, tr: TemplateRow,
 class Resolver:
     def __init__(self, db: CameraDB, probe_timeout: float = 8.0,
                  max_candidates: int = 25, try_defaults: bool = False,
-                 reach_timeout: float = 2.0):
+                 reach_timeout: float = 2.0, count_channels_flag: bool = False,
+                 count_max: int = 64):
         self.db = db
         self.probe_timeout = probe_timeout
         self.max_candidates = max_candidates
         self.try_defaults = try_defaults
         # Fast TCP pre-check timeout; <= 0 disables the reachability check.
         self.reach_timeout = reach_timeout
+        # Enumerate a resolved family's channels and record the count.
+        self.count_channels_flag = count_channels_flag
+        self.count_max = count_max
         # Many cameras/NVRs cap simultaneous RTSP sessions, so probing the same
         # IP from two workers at once makes one of them fail. Serialize per IP.
         self._ip_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
@@ -194,7 +221,15 @@ class Resolver:
         # Hold the per-IP lock across fingerprint + probing so cameras that
         # share an IP (or duplicate rows) don't contend for RTSP sessions.
         with self._ip_lock(cam.ip):
-            return self._resolve_one_locked(cam)
+            rc = self._resolve_one_locked(cam)
+            if rc.ok:
+                if not supports_channel(rc.working_url):
+                    rc.channels = 1
+                elif self.count_channels_flag:
+                    rc.channels = count_channels(rc.working_url, self.probe_timeout,
+                                                 self.count_max)
+                    log.info("[%s] %d channel(s)", cam.label(), rc.channels)
+            return rc
 
     def _resolve_one_locked(self, cam: CameraInput) -> ResolvedCamera:
         # Fast reachability pre-check: skip the whole candidate chain for hosts
@@ -269,20 +304,24 @@ def write_resolved(path: str, cams: list[ResolvedCamera]) -> None:
             w.writerow({"name": c.name, "ip": c.ip, "vendor": c.vendor,
                         "model": c.model, "protocol": c.protocol,
                         "status": c.status, "method": c.method,
-                        "working_url": c.working_url})
+                        "channels": c.channels, "working_url": c.working_url})
 
 
 def read_resolved(path: str) -> list[ResolvedCamera]:
     out: list[ResolvedCamera] = []
     with open(path, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
+            try:
+                channels = int(row.get("channels") or 0)
+            except ValueError:
+                channels = 0
             out.append(ResolvedCamera(
                 name=row.get("name", ""), ip=row.get("ip", ""),
                 vendor=row.get("vendor", ""), model=row.get("model", ""),
                 protocol=row.get("protocol", ""),
                 working_url=row.get("working_url", ""),
                 status=row.get("status", "UNRESOLVED"),
-                method=row.get("method", ""),
+                method=row.get("method", ""), channels=channels,
             ))
     return out
 
@@ -291,8 +330,9 @@ def resolve_cameras(input_csv: str, db: CameraDB, cache_path: str = "resolved.cs
                     use_cache: bool = True, try_defaults: bool = False,
                     probe_timeout: float = 8.0, workers: int = 6,
                     retry_unresolved: bool = False, retry_timeout: float = 12.0,
-                    reach_timeout: float = 2.0,
-                    max_candidates: int = 25) -> list[ResolvedCamera]:
+                    reach_timeout: float = 2.0, max_candidates: int = 25,
+                    count_channels: bool = False,
+                    count_max: int = 64) -> list[ResolvedCamera]:
     """High-level helper used by the CLI's resolve/view/export commands."""
     if use_cache and Path(cache_path).exists():
         cached = read_resolved(cache_path)
@@ -306,7 +346,8 @@ def resolve_cameras(input_csv: str, db: CameraDB, cache_path: str = "resolved.cs
         return []
     log.info("Resolving %d camera(s) ...", len(cams))
     resolver = Resolver(db, probe_timeout=probe_timeout, try_defaults=try_defaults,
-                        reach_timeout=reach_timeout, max_candidates=max_candidates)
+                        reach_timeout=reach_timeout, max_candidates=max_candidates,
+                        count_channels_flag=count_channels, count_max=count_max)
     resolved = resolver.resolve_all(cams, workers=workers)
 
     if retry_unresolved:
@@ -321,7 +362,9 @@ def resolve_cameras(input_csv: str, db: CameraDB, cache_path: str = "resolved.cs
             retry_resolver = Resolver(db, probe_timeout=retry_timeout,
                                       try_defaults=try_defaults,
                                       reach_timeout=reach_timeout,
-                                      max_candidates=max_candidates)
+                                      max_candidates=max_candidates,
+                                      count_channels_flag=count_channels,
+                                      count_max=count_max)
             retried = retry_resolver.resolve_all([cams[i] for i in pending], workers=1)
             recovered = 0
             for slot, i in enumerate(pending):

@@ -66,15 +66,22 @@ def _grab_all_channels(cam: ResolvedCamera, out_dir: str, max_channels: int,
     if not supports_channel(base):
         return _grab_current(cam, out_dir, 1, timeout)
 
+    # If resolve counted this family's channels, grab exactly that many; else
+    # probe up to max_channels and stop after a run of empty channels.
+    if cam.channels and cam.channels > 0:
+        upper, use_miss_streak = cam.channels, False
+    else:
+        upper, use_miss_streak = max_channels, True
+
     saved = misses = 0
-    for ch in range(1, max_channels + 1):
+    for ch in range(1, upper + 1):
         frame = grab_frame(rewrite_channel(base, ch), timeout=timeout)
         if frame is not None:
             path = os.path.join(out_dir, f"{_safe_name(cam)}-ch{ch}.jpg")
             if cv2.imwrite(path, frame):
                 saved += 1
             misses = 0
-        elif saved:
+        elif use_miss_streak and saved:
             misses += 1
             if misses >= miss_streak:
                 break

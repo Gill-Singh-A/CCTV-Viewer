@@ -95,10 +95,17 @@ FAMILIES.forEach((f, i) => {
 
 function hasChannels() { return FAMILIES[fam] && FAMILIES[fam].hasChannel; }
 
+// Highest channel to show: the counted number if known, else a soft 64 cap.
+function maxCh() {
+  const f = FAMILIES[fam];
+  if (!f || !f.hasChannel) return 1;
+  return f.channels > 0 ? f.channels : 64;
+}
+
 function visibleChannels() {
   if (!hasChannels()) return [FAMILIES[fam].channel || 1];
   const start = page * cells + 1;
-  return Array.from({length: cells}, (_, i) => start + i);
+  return Array.from({length: cells}, (_, i) => start + i).filter(ch => ch <= maxCh());
 }
 
 async function render() {
@@ -123,19 +130,24 @@ async function render() {
       <span class="label">${FAMILIES[fam].name}${hasChannels() ? ' · ch ' + ch : ''}</span>
     </div>`).join('');
 
-  const chLabel = hasChannels() ? `ch ${chans[0]}–${chans[chans.length - 1]}` : 'single';
+  const total = hasChannels() && FAMILIES[fam].channels > 0 ? '/' + FAMILIES[fam].channels : '';
+  const chLabel = hasChannels()
+    ? `ch ${chans[0]}–${chans[chans.length - 1]}${total}` : 'single';
   statusEl.textContent = `${FAMILIES.length} families · ${chLabel} · layout ${cells}`;
   document.querySelectorAll('[data-cells]').forEach(b =>
     b.classList.toggle('active', +b.dataset.cells === cells));
-  document.getElementById('prevCh').disabled = !hasChannels();
-  document.getElementById('nextCh').disabled = !hasChannels();
+  const atEnd = (page + 1) * cells >= maxCh();
+  document.getElementById('prevCh').disabled = !hasChannels() || page === 0;
+  document.getElementById('nextCh').disabled = !hasChannels() || atEnd;
 }
 
 familySel.onchange = () => { fam = +familySel.value; page = 0; render(); };
 document.querySelectorAll('[data-cells]').forEach(b =>
   b.onclick = () => { cells = +b.dataset.cells; render(); });
-document.getElementById('nextCh').onclick = () => { if (hasChannels()) { page++; render(); } };
-document.getElementById('prevCh').onclick = () => { if (hasChannels() && page > 0) { page--; render(); } };
+document.getElementById('nextCh').onclick = () => {
+  if (hasChannels() && (page + 1) * cells < maxCh()) { page++; render(); } };
+document.getElementById('prevCh').onclick = () => {
+  if (hasChannels() && page > 0) { page--; render(); } };
 
 function toast(msg) {
   const el = document.getElementById('toast');
@@ -196,7 +208,8 @@ def create_app(families: list[ResolvedCamera], export_root: str = "exports"):
     def index():
         fam_json = [{"id": i, "name": c.name or c.ip, "vendor": c.vendor,
                      "model": c.model, "hasChannel": supports_channel(c.working_url),
-                     "channel": 1} for i, c in enumerate(fams)]
+                     "channels": c.channels, "channel": 1}
+                    for i, c in enumerate(fams)]
         default_cells = 1 if len(fam_json) <= 1 else 4
         return render_template_string(INDEX_HTML, families=fam_json,
                                       default_cells=default_cells)

@@ -47,17 +47,19 @@ def _resolve(args):
         retry_unresolved=args.retry_unresolved, retry_timeout=args.retry_timeout,
         reach_timeout=args.reach_timeout,
         max_candidates=0 if args.all_templates else args.max_candidates,
+        count_channels=args.count_channels, count_max=args.count_max,
     )
 
 
 def cmd_resolve(args: argparse.Namespace) -> int:
     resolved = _resolve(args)
     ok = [r for r in resolved if r.ok]
-    print(f"\n{'NAME':22} {'IP':16} {'VENDOR':12} {'STATUS':11} METHOD")
-    print("-" * 78)
+    print(f"\n{'NAME':22} {'IP':16} {'VENDOR':12} {'STATUS':11} {'CH':>3} METHOD")
+    print("-" * 82)
     for r in resolved:
+        ch = str(r.channels) if r.channels else "-"
         print(f"{r.name[:21]:22} {r.ip[:15]:16} {(r.vendor or '?')[:11]:12} "
-              f"{r.status:11} {r.method}")
+              f"{r.status:11} {ch:>3} {r.method}")
     unreachable = sum(1 for r in resolved if r.status == "UNREACHABLE")
     unresolved = sum(1 for r in resolved if r.status == "UNRESOLVED")
     print(f"\n{len(ok)}/{len(resolved)} cameras resolved "
@@ -133,6 +135,11 @@ def _add_resolve_opts(p: argparse.ArgumentParser,
     p.add_argument("--all", dest="all_templates", action="store_true",
                    help="Probe ALL matching templates with no cap (exhaustive, "
                         "slower). Overrides --max-candidates.")
+    p.add_argument("--count-channels", action="store_true",
+                   help="After resolving, count each family's live channels and "
+                        "store it; viewers/export then cap to that number.")
+    p.add_argument("--count-max", type=int, default=64,
+                   help="Highest channel probed when counting (default 64).")
 
 
 def build_parser() -> argparse.ArgumentParser:
