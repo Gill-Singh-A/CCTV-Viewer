@@ -46,6 +46,7 @@ def _resolve(args):
         probe_timeout=args.timeout, workers=args.workers,
         retry_unresolved=args.retry_unresolved, retry_timeout=args.retry_timeout,
         reach_timeout=args.reach_timeout,
+        max_candidates=0 if args.all_templates else args.max_candidates,
     )
 
 
@@ -126,6 +127,12 @@ def _add_resolve_opts(p: argparse.ArgumentParser,
     p.add_argument("--reach-timeout", type=float, default=2.0,
                    help="Fast TCP reachability pre-check timeout; offline hosts "
                         "are marked UNREACHABLE and skipped. 0 disables the check.")
+    p.add_argument("--max-candidates", type=int, default=25,
+                   help="Max URL templates probed per camera (per credential "
+                        "set). Default 25; higher = more thorough but slower.")
+    p.add_argument("--all", dest="all_templates", action="store_true",
+                   help="Probe ALL matching templates with no cap (exhaustive, "
+                        "slower). Overrides --max-candidates.")
 
 
 def build_parser() -> argparse.ArgumentParser:

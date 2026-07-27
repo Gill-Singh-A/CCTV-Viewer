@@ -180,13 +180,13 @@ class Resolver:
         for tr in self.db.generic_templates():
             cands.append(("generic", _url_from_template(cam, tr, username, password)))
 
-        # de-dup preserving order, cap total probes
+        # de-dup preserving order, cap total probes (<=0 means no cap: try all)
         seen, out = set(), []
         for method, url in cands:
             if url not in seen:
                 seen.add(url)
                 out.append((method, url))
-            if len(out) >= self.max_candidates:
+            if 0 < self.max_candidates <= len(out):
                 break
         return out
 
@@ -291,7 +291,8 @@ def resolve_cameras(input_csv: str, db: CameraDB, cache_path: str = "resolved.cs
                     use_cache: bool = True, try_defaults: bool = False,
                     probe_timeout: float = 8.0, workers: int = 6,
                     retry_unresolved: bool = False, retry_timeout: float = 12.0,
-                    reach_timeout: float = 2.0) -> list[ResolvedCamera]:
+                    reach_timeout: float = 2.0,
+                    max_candidates: int = 25) -> list[ResolvedCamera]:
     """High-level helper used by the CLI's resolve/view/export commands."""
     if use_cache and Path(cache_path).exists():
         cached = read_resolved(cache_path)
@@ -305,7 +306,7 @@ def resolve_cameras(input_csv: str, db: CameraDB, cache_path: str = "resolved.cs
         return []
     log.info("Resolving %d camera(s) ...", len(cams))
     resolver = Resolver(db, probe_timeout=probe_timeout, try_defaults=try_defaults,
-                        reach_timeout=reach_timeout)
+                        reach_timeout=reach_timeout, max_candidates=max_candidates)
     resolved = resolver.resolve_all(cams, workers=workers)
 
     if retry_unresolved:
@@ -319,7 +320,8 @@ def resolve_cameras(input_csv: str, db: CameraDB, cache_path: str = "resolved.cs
                      "(timeout %.0fs) ...", len(pending), retry_timeout)
             retry_resolver = Resolver(db, probe_timeout=retry_timeout,
                                       try_defaults=try_defaults,
-                                      reach_timeout=reach_timeout)
+                                      reach_timeout=reach_timeout,
+                                      max_candidates=max_candidates)
             retried = retry_resolver.resolve_all([cams[i] for i in pending], workers=1)
             recovered = 0
             for slot, i in enumerate(pending):

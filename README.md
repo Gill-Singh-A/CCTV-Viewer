@@ -51,6 +51,12 @@ Each camera reports one of three states:
 - **`UNRESOLVED`** — the host is up but no candidate URL produced a frame
   (usually a wrong password or an unusual URL scheme).
 
+Only the **fingerprinted vendor's** templates are tried (de-duplicated and
+ranked streams-first), followed by 16 generic common paths — not the whole
+database. Probing stops at the first URL that returns a frame, and is capped at
+`--max-candidates` (default 25) URLs per camera. Pass `--all` for an exhaustive,
+uncapped sweep when a stubborn camera resists the default set.
+
 ## Install
 
 Requires Python 3.9+ and FFmpeg on the system (used by OpenCV for RTSP).
@@ -217,6 +223,8 @@ found some) and writes `exports/<timestamp>/<camera>-ch<N>.jpg`.
 | `--retry-unresolved` | after the parallel pass, retry `UNRESOLVED`/`UNREACHABLE` cameras serially with a longer timeout (recovers flaky/busy devices and false-negative reachability checks) |
 | `--retry-timeout` | per-URL probe timeout for the retry pass (default 12) |
 | `--reach-timeout` | TCP reachability pre-check timeout (default 2); `0` disables it |
+| `--max-candidates` | max URL templates probed per camera per credential set (default 25) |
+| `--all` | probe **all** matching templates (no cap) — exhaustive but slower |
 | `-v, --verbose` | debug logging |
 
 ## Project layout
