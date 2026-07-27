@@ -9,7 +9,8 @@ and it will:
    locally scraped [ispyconnect.com](https://www.ispyconnect.com/cameras)
    database of camera connection-URL templates, validating each candidate by
    actually pulling a live frame.
-3. **View** the live feeds in an OpenCV grid (single / 4 / 9 / 16 view).
+3. **View** the live feeds in an OpenCV grid (single / 4 / 9 / 16 view) — or a
+   Flask web dashboard in the browser.
 4. **Export** still frames from every camera in bulk.
 
 > ⚠️ **Authorized use only.** Use this tool exclusively on cameras you own or
@@ -113,6 +114,19 @@ Keyboard controls (focus the video window):
 | `e` | export one frame from every camera now |
 | `q` / `Esc` | quit |
 
+#### Web dashboard
+
+Prefer a browser? Add `--web` (the OpenCV grid is the default):
+
+```bash
+python cctv_viewer.py view -i cameras.csv --web --port 5000
+```
+
+Then open <http://127.0.0.1:5000>. Each camera is served as an MJPEG stream in a
+responsive grid with Single/4/9/16 layout buttons, paging, and an **Export
+frames** button. Use `--host 0.0.0.0` to expose it on your network (only on
+trusted networks — the dashboard is unauthenticated).
+
 ### 5. Bulk export
 
 ```bash
@@ -144,7 +158,8 @@ cctv/
   fingerprint.py      ONVIF + HTTP/RTSP identification
   resolver.py         identification -> validated working URL
   capture.py          threaded OpenCV stream reader
-  viewer.py           OpenCV grid viewer
+  viewer.py           OpenCV grid viewer (default)
+  webviewer.py        Flask web dashboard (view --web)
   export.py           bulk frame export
   models.py, util.py  shared types and helpers
 data/                 scraped database (committed)

@@ -61,12 +61,16 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 
 
 def cmd_view(args: argparse.Namespace) -> int:
-    from cctv.viewer import view
     resolved = _resolve(args)
     if not any(r.ok for r in resolved):
         log.error("No cameras resolved — nothing to view.")
         return 1
-    view(resolved, mode=args.mode)
+    if args.web:
+        from cctv.webviewer import serve
+        serve(resolved, host=args.host, port=args.port)
+    else:
+        from cctv.viewer import view
+        view(resolved, mode=args.mode)
     return 0
 
 
@@ -120,10 +124,14 @@ def build_parser() -> argparse.ArgumentParser:
     _add_resolve_opts(pr)
     pr.set_defaults(func=cmd_resolve)
 
-    pv = sub.add_parser("view", help="Open the OpenCV grid viewer.")
+    pv = sub.add_parser("view", help="Open the viewer (OpenCV grid by default).")
     _add_resolve_opts(pv)
     pv.add_argument("--mode", choices=["single", "grid4", "grid9", "grid16"],
-                    default="grid4", help="Initial grid layout.")
+                    default="grid4", help="Initial grid layout (OpenCV viewer).")
+    pv.add_argument("--web", action="store_true",
+                    help="Serve a Flask web dashboard instead of the OpenCV grid.")
+    pv.add_argument("--host", default="127.0.0.1", help="Web viewer bind host.")
+    pv.add_argument("--port", type=int, default=5000, help="Web viewer port.")
     pv.set_defaults(func=cmd_view)
 
     pe = sub.add_parser("export", help="Bulk-export still frames.")

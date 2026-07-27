@@ -7,6 +7,9 @@ requests>=2.31
 beautifulsoup4>=4.12
 lxml>=5.0
 
+# Web viewer (optional; only needed for `view --web`)
+Flask>=3.0
+
 # Camera identification (ONVIF)
 onvif-zeep>=0.2.12
 # Optional: network auto-discovery of ONVIF cameras
