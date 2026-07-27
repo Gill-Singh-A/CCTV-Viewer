@@ -1,0 +1,9 @@
+# CCTV Viewer input list — credentials only.
+# Required columns: ip, username, password
+# Optional columns: name, http_port, rtsp_port, channel
+# The tool auto-detects each camera's vendor/model and resolves the stream URL.
+# Blank lines and lines beginning with '#' are ignored.
+name,ip,username,password,http_port,rtsp_port,channel
+Front Gate,192.168.1.64,admin,admin12345,80,554,1
+Lobby,192.168.1.65,admin,password,,,1
+Warehouse,192.168.1.66,admin,,8000,554,1

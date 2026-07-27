@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+venv/
+.venv/
+env/
+
+# Scraper raw HTML cache
+.cache/
+
+# Resolved cameras contain credentials -> never commit
+resolved.csv
+*.resolved.csv
+
+# Real camera input lists may contain credentials.
+# Only the example template is tracked.
+cameras.csv
+!data/cameras.csv
+/cameras*.csv
+
+# Exported frames / snapshots
+exports/
+snapshots/
+*.jpg
+*.jpeg
+*.png
+!docs/**/*.png
+
+# OS
+.DS_Store

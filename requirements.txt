@@ -1,0 +1,13 @@
+# Core
+opencv-python>=4.8
+numpy>=1.24
+requests>=2.31
+
+# Scraper
+beautifulsoup4>=4.12
+lxml>=5.0
+
+# Camera identification (ONVIF)
+onvif-zeep>=0.2.12
+# Optional: network auto-discovery of ONVIF cameras
+WSDiscovery>=2.0
