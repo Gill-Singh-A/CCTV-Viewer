@@ -30,3 +30,6 @@ snapshots/
 
 # OS
 .DS_Store
+
+# Development-only project brief (not part of the deliverable)
+CLAUDE.md
