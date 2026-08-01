@@ -1,4 +1,6 @@
 # Core
+# On a headless server use opencv-python-headless instead (no X11/libxcb deps):
+#   pip uninstall -y opencv-python && pip install opencv-python-headless
 opencv-python>=4.8
 numpy>=1.24
 requests>=2.31

@@ -83,6 +83,28 @@ python3 -m venv --system-site-packages venv
 ./venv/bin/pip install onvif-zeep WSDiscovery
 ```
 
+### Headless servers
+
+`opencv-python` links against GUI libraries (X11/`libxcb`), so on a headless
+server importing `cv2` fails with `ImportError: libxcb.so.1: cannot open shared
+object file` — even for `resolve`, which needs no GUI. Use the **headless**
+OpenCV build instead (drop-in; `resolve`, `export` and the `--web` viewer all
+work — only the native `view` window is unavailable, which a headless box can't
+show anyway):
+
+```bash
+pip uninstall -y opencv-python opencv-python-headless
+pip install opencv-python-headless
+```
+
+Alternatively, install the GUI libraries so the native viewer works over a
+display / X-forwarding:
+
+```bash
+sudo apt-get install -y libxcb1 libgl1            # Debian/Ubuntu
+sudo dnf install -y libxcb libX11 libXext mesa-libGL   # RHEL/Fedora/CentOS
+```
+
 ## Usage
 
 ```bash

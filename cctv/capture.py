@@ -25,7 +25,20 @@ os.environ.setdefault(
     "rtsp_transport;tcp|stimeout;5000000",  # stimeout is microseconds
 )
 
-import cv2  # noqa: E402  (import after env var is set)
+try:
+    import cv2  # noqa: E402  (import after env var is set)
+except ImportError as _exc:  # headless server missing OpenCV's GUI libraries
+    if any(lib in str(_exc) for lib in ("libxcb", "libGL", "libX11", "libgtk")):
+        raise ImportError(
+            f"{_exc}\n\n"
+            "OpenCV needs GUI system libraries that are not installed. On a "
+            "headless server use the headless build instead:\n"
+            "    pip uninstall -y opencv-python && pip install opencv-python-headless\n"
+            "or install the libraries:\n"
+            "    apt-get install -y libxcb1 libgl1            # Debian/Ubuntu\n"
+            "    dnf install -y libxcb libX11 libXext mesa-libGL  # RHEL/Fedora"
+        ) from _exc
+    raise
 
 
 def _open(url: str) -> "cv2.VideoCapture":
