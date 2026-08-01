@@ -285,8 +285,13 @@ dashboard is unauthenticated).
 python cctv_viewer.py export -i cameras.csv --frames 1 --out exports/
 ```
 
-Writes `exports/<timestamp>/<camera>.jpg` for every resolvable camera. To grab
-**every channel** of each NVR/DVR:
+Writes `exports/<timestamp>/<camera>.jpg` for every resolvable camera. Each
+snapshot is a lightweight one-shot grab, exports are serialized per IP, and any
+camera that missed its window under load is **retried serially** afterwards — so
+the export captures essentially everything the viewer can show (only genuinely
+offline cameras are skipped). For a large fleet on a modest server, lowering
+`--workers` (or `--workers 1`) trades speed for an even higher first-pass hit
+rate. To grab **every channel** of each NVR/DVR:
 
 ```bash
 python cctv_viewer.py export -i cameras.csv --all-channels --max-channels 32

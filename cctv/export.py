@@ -11,7 +11,9 @@ Entry points:
 from __future__ import annotations
 
 import os
+import threading
 import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import cv2
@@ -30,7 +32,20 @@ def _safe_name(cam: ResolvedCamera) -> str:
 
 def _grab_current(cam: ResolvedCamera, out_dir: str, frames: int,
                   timeout: float) -> int:
-    """Save up to ``frames`` frames from the camera's current channel."""
+    """Save up to ``frames`` frames from the camera's current channel.
+
+    A single snapshot uses the lightweight one-shot :func:`grab_frame` (open,
+    read one frame, release immediately) — far cheaper than a continuous decoder
+    and it frees the connection right away, which matters when many cameras are
+    exported at once. Only multi-frame requests keep a stream open.
+    """
+    if frames <= 1:
+        frame = grab_frame(cam.working_url, timeout=timeout)
+        if frame is None:
+            return 0
+        path = os.path.join(out_dir, f"{_safe_name(cam)}.jpg")
+        return 1 if cv2.imwrite(path, frame) else 0
+
     stream = CameraStream(cam.name or cam.ip, cam.working_url).start()
     saved = 0
     deadline = time.time() + timeout
@@ -44,12 +59,10 @@ def _grab_current(cam: ResolvedCamera, out_dir: str, frames: int,
                 time.sleep(0.2)
             if frame is None:
                 break
-            suffix = f"-{i + 1}" if frames > 1 else ""
-            path = os.path.join(out_dir, f"{_safe_name(cam)}{suffix}.jpg")
+            path = os.path.join(out_dir, f"{_safe_name(cam)}-{i + 1}.jpg")
             if cv2.imwrite(path, frame):
                 saved += 1
-            if frames > 1:
-                time.sleep(0.3)
+            time.sleep(0.3)
     finally:
         stream.stop()
     return saved
@@ -107,10 +120,22 @@ def export_cameras(cameras: list[ResolvedCamera], out_root: str = "exports",
         log.info("Exporting %d frame(s) from %d camera(s) -> %s",
                  frames, len(targets), out_dir)
 
-    def work(cam: ResolvedCamera) -> int:
+    # Serialize per IP so multiple channels/cameras on one NVR don't open
+    # simultaneous sessions and hit its connection limit (distinct IPs still
+    # run in parallel), mirroring the resolver.
+    ip_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
+    locks_guard = threading.Lock()
+
+    def do_grab(cam: ResolvedCamera, t: float) -> int:
         if all_channels:
-            return _grab_all_channels(cam, out_dir, max_channels, timeout, batch_size)
-        return _grab_current(cam, out_dir, frames, timeout)
+            return _grab_all_channels(cam, out_dir, max_channels, t, batch_size)
+        return _grab_current(cam, out_dir, frames, t)
+
+    def work(cam: ResolvedCamera) -> int:
+        with locks_guard:
+            lock = ip_locks[cam.ip]
+        with lock:
+            return do_grab(cam, timeout)
 
     results: dict[str, int] = {}
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -122,6 +147,22 @@ def export_cameras(cameras: list[ResolvedCamera], out_root: str = "exports",
             except Exception as exc:  # pragma: no cover
                 results[cam.label()] = 0
                 log.warning("[%s] export failed: %s", cam.label(), exc)
+
+    # Opening many streams at once saturates CPU/NVR sessions, so some live
+    # cameras miss their window. Retry the failures serially with a longer
+    # timeout — the same completeness-over-speed pass the resolver uses.
+    if workers > 1:
+        failed = [c for c in targets if not results.get(c.label())]
+        if failed:
+            retry_timeout = max(timeout, 15.0)
+            log.info("Retrying %d camera(s) serially (timeout %.0fs) ...",
+                     len(failed), retry_timeout)
+            recovered = 0
+            for cam in failed:
+                n = do_grab(cam, retry_timeout)
+                results[cam.label()] = n
+                recovered += 1 if n else 0
+            log.info("Retry pass recovered %d/%d camera(s).", recovered, len(failed))
 
     ok = sum(1 for v in results.values() if v > 0)
     total = sum(results.values())
