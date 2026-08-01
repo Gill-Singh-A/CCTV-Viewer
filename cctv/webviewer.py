@@ -210,9 +210,12 @@ def create_app(families: list[ResolvedCamera], export_root: str = "exports"):
                      "model": c.model, "hasChannel": supports_channel(c.working_url),
                      "channels": c.channels, "channel": 1}
                     for i, c in enumerate(fams)]
-        default_cells = 1 if len(fam_json) <= 1 else 4
+        # Open in single-channel view: one real stream per family. A grid would
+        # otherwise open channels 2..N even for single-lens cameras — dead tiles
+        # whose failing reconnects can knock out channel 1 on cameras with a
+        # low connection limit. Users expand to 4/9/16 for actual NVRs.
         return render_template_string(INDEX_HTML, families=fam_json,
-                                      default_cells=default_cells)
+                                      default_cells=1)
 
     @app.route("/api/families")
     def api_families():

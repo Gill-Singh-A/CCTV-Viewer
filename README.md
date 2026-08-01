@@ -243,14 +243,18 @@ python cctv_viewer.py resolve -i cameras.csv \
 ### 4. View
 
 ```bash
-python cctv_viewer.py view -i cameras.csv --mode grid4
+python cctv_viewer.py view -i cameras.csv
 ```
 
 The viewer is **family-centric**: a *family* is one input-CSV row (one IP / NVR),
-and the grid tiles the **channels of the currently-selected family**. For a
-single-lens camera that's just one tile; for an NVR it's channels 1, 2, 3, … You
-switch families and page through channels from the keyboard. The window is
-resizable and the canvas is sized to your screen, so it adapts to the display.
+and the grid tiles the **channels of the currently-selected family**. It opens in
+**single-channel view** so every family shows one real feed; expand to
+`4`/`9`/`16` (or `--mode grid4`) to see an NVR's other channels. This matters
+because most cameras are single-lens: a grid would otherwise open channels 2..N
+that don't exist — dead tiles whose failing reconnects can even knock out
+channel 1 on cameras with a low connection limit. You switch families and page
+through channels from the keyboard. The window is resizable and the canvas is
+sized to your screen, so it adapts to the display.
 
 Keyboard controls (focus the video window):
 

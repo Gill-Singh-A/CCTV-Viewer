@@ -175,7 +175,9 @@ def build_parser() -> argparse.ArgumentParser:
     pv = sub.add_parser("view", help="Open the viewer (OpenCV grid by default).")
     _add_resolve_opts(pv, read_cache_by_default=True)
     pv.add_argument("--mode", choices=["single", "grid4", "grid9", "grid16"],
-                    default="grid4", help="Initial grid layout (OpenCV viewer).")
+                    default="single", help="Initial layout (OpenCV viewer). "
+                    "Single by default so single-lens cameras don't open dead "
+                    "channel tiles; use grid4/9/16 for NVR channels.")
     pv.add_argument("--web", action="store_true",
                     help="Serve a Flask web dashboard instead of the OpenCV grid.")
     pv.add_argument("--host", default="127.0.0.1", help="Web viewer bind host.")
