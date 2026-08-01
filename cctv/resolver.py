@@ -89,14 +89,25 @@ def _looks_like_header(fields: list[str]) -> bool:
 def _positional_row(fields: list[str]) -> dict:
     """Map a headerless row to the documented columns.
 
-    Supports both ``name,ip,...`` (name first) and ``ip,...`` (no name) by
-    detecting which field is the IPv4 address.
+    The IP is located by finding the field that is an IPv4 address, so the
+    column order is flexible: ``name,ip,user,pass,...`` and
+    ``name,user,pass,ip,...`` both work, as does an ``ip,...`` first row. The
+    remaining fields, in order, are read as
+    username, password, http_port, rtsp_port, channel.
     """
     f = [x.strip() for x in fields]
-    cols = _POSITIONAL
-    if f and _IPV4_RE.match(f[0]):        # ip-first, no name column
-        cols = _POSITIONAL[1:]
-    return {col: (f[i] if i < len(f) else "") for i, col in enumerate(cols)}
+    ip_idx = next((i for i, x in enumerate(f) if _IPV4_RE.match(x)), None)
+    if ip_idx is None:
+        # No detectable IP — fall back to the documented fixed order.
+        return {col: (f[i] if i < len(f) else "")
+                for i, col in enumerate(_POSITIONAL)}
+    row = {"name": "" if ip_idx == 0 else f[0], "ip": f[ip_idx]}
+    skip = {0, ip_idx}
+    rest = [f[i] for i in range(len(f)) if i not in skip]
+    for key, val in zip(["username", "password", "http_port", "rtsp_port",
+                         "channel"], rest):
+        row[key] = val
+    return row
 
 
 def _make_camera(row: dict) -> Optional[CameraInput]:

@@ -160,11 +160,26 @@ So if you only know the RTSP port, just fill in `rtsp_port` and leave
 (default 1) — you can change it live in the viewer, so it's usually fine to
 leave blank too.
 
-**The header row is optional.** If the first line isn't a header, columns are
-read positionally in the order above (`name,ip,username,password,http_port,
-rtsp_port,channel`), or as `ip,username,password,…` when the first field is an
-IP address. With a header you can put columns in any order. Only `ip` is
-strictly required per row.
+**The header row is optional, and column order is flexible.** Without a header,
+the **IP is located by value** (the field that looks like an IPv4 address), and
+the remaining fields are read in order as
+`name` (first field), then `username, password, http_port, rtsp_port, channel`.
+So both of these parse correctly:
+
+```
+Front Gate,192.168.1.64,admin,secret,,554      # name,ip,user,pass,...
+Front Gate,admin,secret,192.168.1.64,,554      # name,user,pass,ip,...
+```
+
+Username and password are never swapped (the IP is unambiguous and the other
+fields keep their order). If you use a **header**, columns can be in any order
+and are matched by name — the most foolproof option:
+
+```
+name,username,password,ip,http_port,rtsp_port
+```
+
+Only an IP per row is strictly required.
 
 ### 3. Resolve
 
