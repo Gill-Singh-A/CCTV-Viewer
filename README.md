@@ -145,10 +145,20 @@ Front Gate,192.168.1.64,admin,admin12345,,,1
 Lobby,192.168.1.65,admin,password,8000,554,1
 ```
 
-Blank lines and `#` comments are ignored. Missing ports default to
-80/8000 (ONVIF) and 554 (RTSP). `channel` is only a *starting* channel for
-NVRs/DVRs (default 1) — you can change it live in the viewer, so it's usually
-fine to leave blank.
+Blank lines and `#` comments are ignored. **Both ports are optional and
+independent** — supply whichever you know:
+
+- `rtsp_port` is used for every RTSP URL, including the one ONVIF advertises
+  (the tool rebuilds that URL against your IP + `rtsp_port`, which fixes cameras
+  reached through NAT or on a non-standard RTSP port). If omitted, RTSP defaults
+  to 554.
+- `http_port` is used for HTTP snapshot URLs and as an extra ONVIF port to try.
+  If omitted, HTTP defaults to 80 and ONVIF still tries 80/8000/8899/2020/8080.
+
+So if you only know the RTSP port, just fill in `rtsp_port` and leave
+`http_port` blank. `channel` is only a *starting* channel for NVRs/DVRs
+(default 1) — you can change it live in the viewer, so it's usually fine to
+leave blank too.
 
 **The header row is optional.** If the first line isn't a header, columns are
 read positionally in the order above (`name,ip,username,password,http_port,

@@ -159,6 +159,30 @@ def inject_credentials(uri: str, username: str, password: str) -> str:
                        parts.query, parts.fragment))
 
 
+def rehost_uri(uri: str, ip: str, port: "int | None" = None) -> str:
+    """Point ``uri`` at ``ip`` (and ``port`` if given), keeping path/query.
+
+    ONVIF's GetStreamUri often advertises an internal host or the camera's own
+    default RTSP port, which is wrong when the camera is reached through NAT / a
+    forwarded or non-standard port. Rebuilding the URI against the address the
+    user actually uses (and their ``rtsp_port`` when known) fixes that.
+    """
+    parts = urlsplit(uri)
+    userinfo = ""
+    hostport = parts.netloc
+    if "@" in hostport:
+        userinfo, hostport = hostport.rsplit("@", 1)
+        userinfo += "@"
+    try:
+        existing_port = parts.port
+    except ValueError:
+        existing_port = None
+    new_port = port or existing_port
+    netloc = f"{userinfo}{ip}" + (f":{new_port}" if new_port else "")
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query,
+                       parts.fragment))
+
+
 def _url_from_template(cam: CameraInput, tr: TemplateRow,
                        username: str, password: str) -> str:
     port = 0
@@ -205,7 +229,12 @@ class Resolver:
         cands: list[tuple[str, str]] = []
 
         if fp.direct_uri:
-            cands.append(("onvif", inject_credentials(fp.direct_uri, username, password)))
+            # Rebuild the ONVIF URI against the address the user actually uses
+            # (cam.ip + their rtsp_port if known), then keep the original as a
+            # fallback in case ONVIF's host/port was already correct.
+            rehosted = rehost_uri(fp.direct_uri, cam.ip, cam.rtsp_port)
+            for uri in (rehosted, fp.direct_uri):
+                cands.append(("onvif", inject_credentials(uri, username, password)))
 
         templates = self.db.templates_for(fp.vendor, fp.model)
         method = "db-model" if fp.model else "db-vendor"

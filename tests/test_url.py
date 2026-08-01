@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cctv.util import (substitute, build_url, normalize_protocol, normalize_key,
                        channel_of, rewrite_channel, supports_channel)
-from cctv.resolver import inject_credentials
+from cctv.resolver import inject_credentials, rehost_uri
 
 
 def test_substitute_stream_tokens():
@@ -93,6 +93,29 @@ def test_no_channel_is_unchanged():
     assert channel_of(u) is None
     assert not supports_channel(u)
     assert rewrite_channel(u, 9) == u
+
+
+def test_rehost_uri_applies_rtsp_port():
+    # ONVIF advertised the camera's internal host + default port; the user only
+    # knows a forwarded/non-standard RTSP port and the address they connect to.
+    assert rehost_uri("rtsp://10.0.0.5:554/live", "203.0.113.9", 8554) == \
+        "rtsp://203.0.113.9:8554/live"
+
+
+def test_rehost_uri_keeps_onvif_port_when_none_given():
+    assert rehost_uri("rtsp://10.0.0.5:554/live", "203.0.113.9", None) == \
+        "rtsp://203.0.113.9:554/live"
+
+
+def test_rehost_uri_preserves_path_and_query():
+    assert rehost_uri("rtsp://10.0.0.5/cam?channel=1&x=2", "1.2.3.4", 554) == \
+        "rtsp://1.2.3.4:554/cam?channel=1&x=2"
+
+
+def test_rehost_then_inject_credentials():
+    uri = rehost_uri("rtsp://10.0.0.5:554/live", "1.2.3.4", 8554)
+    assert inject_credentials(uri, "admin", "p@ss") == \
+        "rtsp://admin:p%40ss@1.2.3.4:8554/live"
 
 
 def test_reachability_check():
