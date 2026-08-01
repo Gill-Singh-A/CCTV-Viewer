@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import threading
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import cv2
@@ -25,13 +25,40 @@ from .util import channel_of, get_logger, rewrite_channel, supports_channel
 log = get_logger("cctv.export")
 
 
+def _sanitize(value: str) -> str:
+    return "".join(c if c.isalnum() or c in "-_." else "_"
+                   for c in (value or "").strip())
+
+
 def _safe_name(cam: ResolvedCamera) -> str:
-    base = (cam.name or cam.ip or "camera").strip()
-    return "".join(c if c.isalnum() or c in "-_." else "_" for c in base)
+    return _sanitize(cam.name or cam.ip or "camera")
+
+
+def _unique_stems(cams: list[ResolvedCamera]) -> dict[int, str]:
+    """Map each camera to a collision-free output filename stem.
+
+    Cameras may share a name; disambiguate duplicates with the IP, then a
+    numeric suffix for exact duplicate rows, so exports never overwrite.
+    """
+    base = {id(c): _safe_name(c) for c in cams}
+    dup = Counter(base.values())
+    used: set[str] = set()
+    stems: dict[int, str] = {}
+    for c in cams:
+        stem = base[id(c)]
+        if dup[stem] > 1:                       # shared name -> add the IP
+            stem = f"{stem}_{_sanitize(c.ip)}"
+        final, n = stem, 1
+        while final in used:                    # exact duplicate -> counter
+            n += 1
+            final = f"{stem}_{n}"
+        used.add(final)
+        stems[id(c)] = final
+    return stems
 
 
 def _grab_current(cam: ResolvedCamera, out_dir: str, frames: int,
-                  timeout: float) -> int:
+                  timeout: float, stem: str) -> int:
     """Save up to ``frames`` frames from the camera's current channel.
 
     A single snapshot uses the lightweight one-shot :func:`grab_frame` (open,
@@ -43,7 +70,7 @@ def _grab_current(cam: ResolvedCamera, out_dir: str, frames: int,
         frame = grab_frame(cam.working_url, timeout=timeout)
         if frame is None:
             return 0
-        path = os.path.join(out_dir, f"{_safe_name(cam)}.jpg")
+        path = os.path.join(out_dir, f"{stem}.jpg")
         return 1 if cv2.imwrite(path, frame) else 0
 
     stream = CameraStream(cam.name or cam.ip, cam.working_url).start()
@@ -59,7 +86,7 @@ def _grab_current(cam: ResolvedCamera, out_dir: str, frames: int,
                 time.sleep(0.2)
             if frame is None:
                 break
-            path = os.path.join(out_dir, f"{_safe_name(cam)}-{i + 1}.jpg")
+            path = os.path.join(out_dir, f"{stem}-{i + 1}.jpg")
             if cv2.imwrite(path, frame):
                 saved += 1
             time.sleep(0.3)
@@ -69,7 +96,7 @@ def _grab_current(cam: ResolvedCamera, out_dir: str, frames: int,
 
 
 def _grab_all_channels(cam: ResolvedCamera, out_dir: str, max_channels: int,
-                       timeout: float, batch_size: int) -> int:
+                       timeout: float, batch_size: int, stem: str) -> int:
     """Save one frame per live channel of an NVR/DVR.
 
     If resolve already counted this family's channels, grab exactly that range.
@@ -78,13 +105,13 @@ def _grab_all_channels(cam: ResolvedCamera, out_dir: str, max_channels: int,
     """
     base = cam.working_url
     if not supports_channel(base):
-        return _grab_current(cam, out_dir, 1, timeout)
+        return _grab_current(cam, out_dir, 1, timeout, stem)
 
     def save(ch: int) -> bool:
         frame = grab_frame(rewrite_channel(base, ch), timeout=timeout)
         if frame is None:
             return False
-        path = os.path.join(out_dir, f"{_safe_name(cam)}-ch{ch}.jpg")
+        path = os.path.join(out_dir, f"{stem}-ch{ch}.jpg")
         return bool(cv2.imwrite(path, frame))
 
     # Known count: grab exactly channels 1..N (dead ones simply don't save).
@@ -126,10 +153,13 @@ def export_cameras(cameras: list[ResolvedCamera], out_root: str = "exports",
     ip_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
     locks_guard = threading.Lock()
 
+    stems = _unique_stems(targets)
+
     def do_grab(cam: ResolvedCamera, t: float) -> int:
+        stem = stems[id(cam)]
         if all_channels:
-            return _grab_all_channels(cam, out_dir, max_channels, t, batch_size)
-        return _grab_current(cam, out_dir, frames, t)
+            return _grab_all_channels(cam, out_dir, max_channels, t, batch_size, stem)
+        return _grab_current(cam, out_dir, frames, t, stem)
 
     def work(cam: ResolvedCamera) -> int:
         with locks_guard:
@@ -137,22 +167,23 @@ def export_cameras(cameras: list[ResolvedCamera], out_root: str = "exports",
         with lock:
             return do_grab(cam, timeout)
 
-    results: dict[str, int] = {}
+    # Keyed by camera identity (not name/label — those can collide).
+    results: dict[int, int] = {}
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futs = {pool.submit(work, c): c for c in targets}
         for fut in as_completed(futs):
             cam = futs[fut]
             try:
-                results[cam.label()] = fut.result()
+                results[id(cam)] = fut.result()
             except Exception as exc:  # pragma: no cover
-                results[cam.label()] = 0
+                results[id(cam)] = 0
                 log.warning("[%s] export failed: %s", cam.label(), exc)
 
     # Opening many streams at once saturates CPU/NVR sessions, so some live
     # cameras miss their window. Retry the failures serially with a longer
     # timeout — the same completeness-over-speed pass the resolver uses.
     if workers > 1:
-        failed = [c for c in targets if not results.get(c.label())]
+        failed = [c for c in targets if not results.get(id(c))]
         if failed:
             retry_timeout = max(timeout, 15.0)
             log.info("Retrying %d camera(s) serially (timeout %.0fs) ...",
@@ -160,14 +191,15 @@ def export_cameras(cameras: list[ResolvedCamera], out_root: str = "exports",
             recovered = 0
             for cam in failed:
                 n = do_grab(cam, retry_timeout)
-                results[cam.label()] = n
+                results[id(cam)] = n
                 recovered += 1 if n else 0
             log.info("Retry pass recovered %d/%d camera(s).", recovered, len(failed))
 
     ok = sum(1 for v in results.values() if v > 0)
     total = sum(results.values())
-    for label, n in results.items():
-        log.info("  %-30s %s", label, f"{n} frame(s)" if n else "FAILED")
+    for cam in targets:
+        n = results.get(id(cam), 0)
+        log.info("  %-30s %s", cam.label(), f"{n} frame(s)" if n else "FAILED")
     skipped = len(cameras) - len(targets)
     log.info("Export complete: %d image(s) from %d/%d cameras%s. Folder: %s",
              total, ok, len(targets),

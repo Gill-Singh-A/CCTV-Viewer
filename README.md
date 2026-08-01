@@ -300,6 +300,10 @@ python cctv_viewer.py export -i cameras.csv --all-channels --max-channels 32
 This probes channels `1..max` (stopping after a couple of empty ones once it has
 found some) and writes `exports/<timestamp>/<camera>-ch<N>.jpg`.
 
+Camera names need not be unique — if two families share a name, their export
+filenames are disambiguated with the IP (and a counter for exact duplicates), so
+nothing is overwritten.
+
 ## Common options (`resolve` / `view` / `export`)
 
 | Option | Meaning |
